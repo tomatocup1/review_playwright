@@ -1,0 +1,1 @@
+{"version":3,"file":"initProjectRules.js","sourceRoot":"","sources":["../../../src/prompts/generators/initProjectRules.ts"],"names":[],"mappings":"AAAA;;;GAGG;AAEH,OAAO,EAAE,UAAU,EAAE,sBAAsB,EAAE,MAAM,cAAc,CAAC;AAQlE;;;;GAIG;AACH,MAAM,UAAU,yBAAyB,CACvC,MAAqC;IAErC,MAAM,aAAa,GAAG,sBAAsB,CAAC,2BAA2B,CAAC,CAAC;IAE1E,gCAAgC;IAChC,OAAO,UAAU,CAAC,aAAa,EAAE,oBAAoB,CAAC,CAAC;AACzD,CAAC"}
