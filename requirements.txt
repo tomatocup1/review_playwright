@@ -45,6 +45,8 @@ python-multipart==0.0.6
 
 # 데이터베이스
 asyncpg==0.29.0
+sqlalchemy==2.0.25
+pymysql==1.1.0
 
 # 유효성 검사
 pydantic==2.5.3
