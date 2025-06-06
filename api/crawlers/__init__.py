@@ -18,6 +18,7 @@ from .sync_wrapper import SyncCrawlerWrapper
 # Windows용 동기 크롤러 임포트
 from .windows_sync_crawler import WindowsCrawlerAdapter
 from .baemin_sync_crawler import BaeminSyncCrawler
+from .threaded_crawler import ThreadedCrawlerWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -52,20 +53,20 @@ USE_SYNC_MODE = IS_WINDOWS and os.getenv('FORCE_ASYNC_CRAWLER', '').lower() != '
 async def get_crawler(platform: str, headless: bool = True):
     """플랫폼명으로 크롤러 인스턴스 생성 (async context manager)"""
     
-    # Windows 환경에서는 동기 크롤러 사용
+    # Windows 환경에서는 스레드 기반 동기 크롤러 사용
     if USE_SYNC_MODE:
         sync_crawler_class = SYNC_CRAWLER_MAPPING.get(platform.lower())
         if sync_crawler_class:
-            logger.info(f"Windows 환경: 동기 모드 크롤러 사용 ({platform})")
+            logger.info(f"Windows 환경: 스레드 기반 동기 크롤러 사용 ({platform})")
             
-            # WindowsCrawlerAdapter를 사용하여 동기 크롤러를 비동기 인터페이스로 변환
-            adapter = WindowsCrawlerAdapter(sync_crawler_class, headless=headless)
+            # ThreadedCrawlerWrapper를 사용하여 별도 스레드에서 실행
+            wrapper = ThreadedCrawlerWrapper(sync_crawler_class, headless=headless)
             
             try:
-                await adapter.__aenter__()
-                yield adapter
+                await wrapper.__aenter__()
+                yield wrapper
             finally:
-                await adapter.__aexit__(None, None, None)
+                await wrapper.__aexit__(None, None, None)
             return
     
     # 기존 비동기 크롤러 사용 (Linux/Mac)
