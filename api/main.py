@@ -57,11 +57,12 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), na
 templates = Jinja2Templates(directory=str(BASE_DIR / "web" / "templates"))
 
 # 라우터 임포트
-from api.routes import auth  # 인증 라우터
+from api.routes import auth, pages  # 인증 및 페이지 라우터
 # from api.routes import stores, reviews, dashboard, pages, settings  # 나중에 추가
 
 # 라우터 등록
 app.include_router(auth.router)  # 인증 라우터 (태그와 prefix는 라우터 파일에서 정의)
+app.include_router(pages.router)  # 페이지 라우터
 # app.include_router(stores.router, prefix="/api/stores", tags=["매장"])
 # app.include_router(reviews.router, prefix="/api/reviews", tags=["리뷰"])
 # app.include_router(dashboard.router, prefix="/api/dashboard", tags=["대시보드"])
