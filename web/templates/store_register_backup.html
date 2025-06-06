@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>매장 등록 - 리뷰 자동화 서비스</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .store-register-container {
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 40px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .platform-selector {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .platform-card {
+            flex: 1;
+            padding: 30px;
+            text-align: center;
+            border: 2px solid #ddd;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .platform-card:hover {
+            border-color: var(--primary-color);
+            transform: translateY(-5px);
+        }
+        
+        .platform-card.selected {
+            border-color: var(--primary-color);
+            background: var(--primary-light);
+        }
+        
+        .platform-card img {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 10px;
+        }
+        
+        .form-section {
+            margin-bottom: 30px;
+        }
+        
+        .form-section h3 {
+            margin-bottom: 15px;
+            color: var(--primary-color);
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .form-row .form-group {
+            flex: 1;
+        }
+        
+        .store-list {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .store-item {
+            padding: 10px 15px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+        
+        .store-item:hover {
+            background: #f5f5f5;
+        }
+        
+        .store-item.selected {
+            background: var(--primary-light);
+            font-weight: bold;
+        }
+        
+        .policy-settings {
+            background: #f9f9f9;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        
+        .rating-settings {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .rating-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .btn-fetch-stores {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        
+        .btn-fetch-stores:hover {
+            background: #45a049;
+        }
+        
+        .loading {
+            display: inline-block;
+            margin-left: 10px;
+        }
+        
+        .stars {
+            color: #ffa500;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/" class="nav-brand">리뷰 자동화</a>
+            <div class="nav-menu">
+                <a href="/dashboard" class="nav-link">대시보드</a>
+                <a href="/stores" class="nav-link active">매장 관리</a>
+                <a href="/reviews" class="nav-link">리뷰 관리</a>
+                <a href="/settings" class="nav-link">설정</a>
+                <a href="#" onclick="logout()" class="nav-link">로그아웃</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="store-register-container">
+        <h1>새 매장 등록</h1>
+        
+        <form id="storeRegisterForm">
+            <!-- 플랫폼 선택 -->
+            <div class="form-section">
+                <h3>1. 플랫폼 선택</h3>
+                <div class="platform-selector">
+                    <div class="platform-card" data-platform="baemin">
+                        <img src="/static/images/baemin-logo.png" alt="배달의민족">
+                        <h4>배달의민족</h4>
+                    </div>
+                    <div class="platform-card" data-platform="yogiyo">
+                        <img src="/static/images/yogiyo-logo.png" alt="요기요">
+                        <h4>요기요</h4>
+                    </div>
+                    <div class="platform-card" data-platform="coupang">
+                        <img src="/static/images/coupang-logo.png" alt="쿠팡이츠">
+                        <h4>쿠팡이츠</h4>
+                    </div>
+                </div>
+                <input type="hidden" id="platform" name="platform" required>
+            </div>
+
+            <!-- 로그인 정보 -->
+            <div class="form-section">
+                <h3>2. 플랫폼 로그인 정보</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="platform_id">플랫폼 아이디</label>
+                        <input type="text" id="platform_id" name="platform_id" required 
+                               placeholder="플랫폼 로그인 아이디">
+                    </div>
+                    <div class="form-group">
+                        <label for="platform_pw">플랫폼 비밀번호</label>
+                        <input type="password" id="platform_pw" name="platform_pw" required 
+                               placeholder="플랫폼 로그인 비밀번호">
+                    </div>
+                </div>
+                <button type="button" class="btn-fetch-stores" onclick="fetchStores()">
+                    매장 정보 가져오기
+                </button>
+                <span class="loading" id="loadingSpinner" style="display: none;">
+                    <i class="fas fa-spinner fa-spin"></i> 매장 정보를 가져오는 중...
+                </span>
+            </div>
+
+            <!-- 매장 선택 -->
+            <div class="form-section" id="storeSelectSection" style="display: none;">
+                <h3>3. 매장 선택</h3>
+                <div class="store-list" id="storeList"></div>
+                <input type="hidden" id="platform_code" name="platform_code">
+                <input type="hidden" id="store_name" name="store_name">
+            </div>
+
+            <!-- 답글 정책 설정 -->
+            <div class="form-section">
+                <h3>4. 답글 정책 설정</h3>
+                <div class="policy-settings">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="greeting_start">시작 인사말</label>
+                            <input type="text" id="greeting_start" name="greeting_start" 
+                                   value="안녕하세요" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="greeting_end">마무리 인사말</label>
+                            <input type="text" id="greeting_end" name="greeting_end" 
+                                   value="감사합니다">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="role">AI 역할</label>
+                            <input type="text" id="role" name="role" 
+                                   value="친절한 사장님" placeholder="예: 친절한 사장님, 정중한 직원">
+                        </div>
+                        <div class="form-group">
+                            <label for="tone">답글 톤</label>
+                            <input type="text" id="tone" name="tone" 
+                                   value="친근하고 정중한" placeholder="예: 친근한, 정중한, 격식있는">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="max_length">답글 최대 길이 (글자)</label>
+                        <input type="number" id="max_length" name="max_length" 
+                               value="300" min="50" max="500" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>별점별 자동 답글 설정</label>
+                        <div class="rating-settings">
+                            <div class="rating-item">
+                                <input type="checkbox" id="rating_5_reply" name="rating_5_reply" checked>
+                                <label for="rating_5_reply">
+                                    <span class="stars">★★★★★</span> 5점 리뷰
+                                </label>
+                            </div>
+                            <div class="rating-item">
+                                <input type="checkbox" id="rating_4_reply" name="rating_4_reply" checked>
+                                <label for="rating_4_reply">
+                                    <span class="stars">★★★★☆</span> 4점 리뷰
+                                </label>
+                            </div>
+                            <div class="rating-item">
+                                <input type="checkbox" id="rating_3_reply" name="rating_3_reply" checked>
+                                <label for="rating_3_reply">
+                                    <span class="stars">★★★☆☆</span> 3점 리뷰
+                                </label>
+                            </div>
+                            <div class="rating-item">
+                                <input type="checkbox" id="rating_2_reply" name="rating_2_reply" checked>
+                                <label for="rating_2_reply">
+                                    <span class="stars">★★☆☆☆</span> 2점 리뷰
+                                </label>
+                            </div>
+                            <div class="rating-item">
+                                <input type="checkbox" id="rating_1_reply" name="rating_1_reply" checked>
+                                <label for="rating_1_reply">
+                                    <span class="stars">★☆☆☆☆</span> 1점 리뷰
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 운영 설정 -->
+            <div class="form-section">
+                <h3>5. 운영 설정</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="auto_reply_hours">자동 답글 운영 시간</label>
+                        <input type="text" id="auto_reply_hours" name="auto_reply_hours" 
+                               value="10:00-20:00" pattern="\d{2}:\d{2}-\d{2}:\d{2}" 
+                               placeholder="10:00-20:00">
+                    </div>
+                    <div class="form-group">
+                        <label for="reply_delay_minutes">답글 지연 시간 (분)</label>
+                        <input type="number" id="reply_delay_minutes" name="reply_delay_minutes" 
+                               value="30" min="0" max="180">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <input type="checkbox" id="weekend_enabled" name="weekend_enabled" checked>
+                        <label for="weekend_enabled">주말 운영</label>
+                    </div>
+                    <div class="form-group">
+                        <input type="checkbox" id="holiday_enabled" name="holiday_enabled">
+                        <label for="holiday_enabled">공휴일 운영</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">매장 등록</button>
+                <a href="/stores" class="btn btn-secondary">취소</a>
+            </div>
+        </form>
+    </div>
+
+    <script src="/static/js/auth.js"></script>
+    <script>
+        // 플랫폼 선택
+        document.querySelectorAll('.platform-card').forEach(card => {
+            card.addEventListener('click', function() {
+                document.querySelectorAll('.platform-card').forEach(c => c.classList.remove('selected'));
+                this.classList.add('selected');
+                document.getElementById('platform').value = this.dataset.platform;
+            });
+        });
+
+        // 매장 정보 가져오기
+        async function fetchStores() {
+            const platform = document.getElementById('platform').value;
+            const platform_id = document.getElementById('platform_id').value;
+            const platform_pw = document.getElementById('platform_pw').value;
+
+            if (!platform || !platform_id || !platform_pw) {
+                alert('플랫폼을 선택하고 로그인 정보를 입력해주세요.');
+                return;
+            }
+
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            const storeSelectSection = document.getElementById('storeSelectSection');
+            const storeList = document.getElementById('storeList');
+
+            loadingSpinner.style.display = 'inline-block';
+
+            try {
+                const response = await makeAuthenticatedRequest('/api/stores/crawl', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        platform,
+                        platform_id,
+                        platform_pw
+                    })
+                });
+
+                if (response.stores && response.stores.length > 0) {
+                    storeList.innerHTML = '';
+                    response.stores.forEach(store => {
+                        const storeItem = document.createElement('div');
+                        storeItem.className = 'store-item';
+                        storeItem.innerHTML = `
+                            <strong>${store.store_name}</strong>
+                            <span style="color: #666; font-size: 0.9em;">
+                                (${store.platform_code})
+                                ${store.status ? `- ${store.status}` : ''}
+                            </span>
+                        `;
+                        storeItem.onclick = () => selectStore(store);
+                        storeList.appendChild(storeItem);
+                    });
+                    storeSelectSection.style.display = 'block';
+                } else {
+                    alert('등록 가능한 매장을 찾을 수 없습니다.');
+                }
+            } catch (error) {
+                alert(error.message || '매장 정보를 가져오는데 실패했습니다.');
+            } finally {
+                loadingSpinner.style.display = 'none';
+            }
+        }
+
+        // 매장 선택
+        function selectStore(store) {
+            document.querySelectorAll('.store-item').forEach(item => item.classList.remove('selected'));
+            event.target.closest('.store-item').classList.add('selected');
+            
+            document.getElementById('platform_code').value = store.platform_code;
+            document.getElementById('store_name').value = store.store_name;
+        }
+
+        // 폼 제출
+        document.getElementById('storeRegisterForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const formData = new FormData(e.target);
+            const data = {
+                platform: formData.get('platform'),
+                platform_id: formData.get('platform_id'),
+                platform_pw: formData.get('platform_pw'),
+                platform_code: formData.get('platform_code'),
+                store_name: formData.get('store_name'),
+                greeting_start: formData.get('greeting_start'),
+                greeting_end: formData.get('greeting_end'),
+                role: formData.get('role'),
+                tone: formData.get('tone'),
+                max_length: parseInt(formData.get('max_length')),
+                rating_5_reply: formData.get('rating_5_reply') === 'on',
+                rating_4_reply: formData.get('rating_4_reply') === 'on',
+                rating_3_reply: formData.get('rating_3_reply') === 'on',
+                rating_2_reply: formData.get('rating_2_reply') === 'on',
+                rating_1_reply: formData.get('rating_1_reply') === 'on',
+                auto_reply_enabled: true,
+                auto_reply_hours: formData.get('auto_reply_hours'),
+                reply_delay_minutes: parseInt(formData.get('reply_delay_minutes')),
+                weekend_enabled: formData.get('weekend_enabled') === 'on',
+                holiday_enabled: formData.get('holiday_enabled') === 'on'
+            };
+
+            try {
+                const response = await makeAuthenticatedRequest('/api/stores/register', {
+                    method: 'POST',
+                    body: JSON.stringify(data)
+                });
+
+                if (response.success) {
+                    alert('매장이 성공적으로 등록되었습니다!');
+                    window.location.href = '/stores';
+                } else {
+                    alert(response.message || '매장 등록에 실패했습니다.');
+                }
+            } catch (error) {
+                alert(error.message || '매장 등록 중 오류가 발생했습니다.');
+            }
+        });
+    </script>
+</body>
+</html>

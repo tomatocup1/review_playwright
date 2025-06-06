@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}매장 관리 - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="container" style="margin-top: 80px;">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>매장 관리</h1>
+        <a href="/stores/register" class="btn btn-primary">
+            <i class="fas fa-plus"></i> 새 매장 등록
+        </a>
+    </div>
+    
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>플랫폼</th>
+                            <th>매장명</th>
+                            <th>매장코드</th>
+                            <th>자동답글</th>
+                            <th>상태</th>
+                            <th>등록일</th>
+                            <th>작업</th>
+                        </tr>
+                    </thead>
+                    <tbody id="storeList">
+                        <tr>
+                            <td colspan="7" class="text-center py-5">
+                                <i class="fas fa-store fa-3x text-muted mb-3"></i>
+                                <p class="text-muted">등록된 매장이 없습니다.</p>
+                                <a href="/stores/register" class="btn btn-primary">첫 매장 등록하기</a>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/auth.js"></script>
+<script>
+    // 매장 목록 로드
+    async function loadStores() {
+        try {
+            const response = await makeAuthenticatedRequest('/api/stores');
+            const storeList = document.getElementById('storeList');
+            
+            if (response.stores && response.stores.length > 0) {
+                storeList.innerHTML = response.stores.map(store => `
+                    <tr>
+                        <td>
+                            <span class="badge bg-secondary">${store.platform.toUpperCase()}</span>
+                        </td>
+                        <td><strong>${store.store_name}</strong></td>
+                        <td><code>${store.platform_code}</code></td>
+                        <td>
+                            ${store.auto_reply_enabled 
+                                ? '<span class="badge bg-success">활성</span>' 
+                                : '<span class="badge bg-danger">비활성</span>'}
+                        </td>
+                        <td>
+                            ${store.is_active 
+                                ? '<span class="text-success"><i class="fas fa-check-circle"></i> 운영중</span>' 
+                                : '<span class="text-danger"><i class="fas fa-times-circle"></i> 중지</span>'}
+                        </td>
+                        <td>${new Date(store.created_at).toLocaleDateString()}</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary" onclick="editStore('${store.store_code}')">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteStore('${store.store_code}')">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+            }
+        } catch (error) {
+            console.error('매장 목록 로드 실패:', error);
+        }
+    }
+    
+    // 매장 편집
+    function editStore(storeCode) {
+        window.location.href = `/stores/${storeCode}/edit`;
+    }
+    
+    // 매장 삭제
+    async function deleteStore(storeCode) {
+        if (!confirm('정말 이 매장을 삭제하시겠습니까?')) {
+            return;
+        }
+        
+        try {
+            await makeAuthenticatedRequest(`/api/stores/${storeCode}`, {
+                method: 'DELETE'
+            });
+            alert('매장이 삭제되었습니다.');
+            loadStores();
+        } catch (error) {
+            alert('매장 삭제에 실패했습니다.');
+        }
+    }
+    
+    document.addEventListener('DOMContentLoaded', () => {
+        checkAuth(); // 인증 확인
+        loadStores();
+    });
+</script>
+{% endblock %}

@@ -322,52 +322,6 @@ async function apiRequest(url, options = {}) {
     return response;
 }
 
-// 인증된 API 요청 헬퍼 (store_register.html에서 사용)
-async function makeAuthenticatedRequest(url, options = {}) {
-    const accessToken = TokenManager.getAccessToken();
-    
-    if (!accessToken) {
-        throw new Error('로그인이 필요합니다.');
-    }
-    
-    const defaultOptions = {
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${accessToken}`
-        }
-    };
-    
-    const mergedOptions = {
-        ...defaultOptions,
-        ...options,
-        headers: {
-            ...defaultOptions.headers,
-            ...options.headers
-        }
-    };
-    
-    let response = await fetch(url, mergedOptions);
-    
-    // 토큰 만료시 자동 갱신
-    if (response.status === 401) {
-        const newToken = await TokenManager.refreshAccessToken();
-        if (newToken) {
-            mergedOptions.headers['Authorization'] = `Bearer ${newToken}`;
-            response = await fetch(url, mergedOptions);
-        } else {
-            throw new Error('인증 토큰이 만료되었습니다. 다시 로그인해주세요.');
-        }
-    }
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-        throw new Error(data.detail || data.message || '요청 처리에 실패했습니다.');
-    }
-    
-    return data;
-}
-
 // 로그아웃
 function logout() {
     TokenManager.clearTokens();
@@ -377,5 +331,4 @@ function logout() {
 // Export for use in other scripts
 window.TokenManager = TokenManager;
 window.apiRequest = apiRequest;
-window.makeAuthenticatedRequest = makeAuthenticatedRequest;
 window.logout = logout;

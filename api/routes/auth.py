@@ -5,22 +5,21 @@
 - 현재 사용자 정보 조회
 """
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 from typing import Optional
+from supabase import Client
 
-from ..models.auth import LoginRequest, TokenResponse
-from ..models.user import UserCreate, UserResponse, UserInDB
+from ..schemas.auth import LoginRequest, LoginResponse, UserCreate, User
 from ..auth.jwt import create_access_token, create_refresh_token
-from ..auth.utils import verify_password, get_password_hash, get_current_user
+from ..auth.utils import verify_password, get_password_hash
 from ..services.user_service import UserService
-from config.database import get_db
+from ..dependencies import get_db, get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=User, status_code=status.HTTP_201_CREATED)
 async def register(
     user_data: UserCreate,
-    db: Session = Depends(get_db)
+    db: Client = Depends(get_db)
 ):
     """
     새로운 사용자 등록
@@ -34,20 +33,26 @@ async def register(
     user_service = UserService(db)
     
     # 이메일 중복 확인
-    if user_service.get_user_by_email(user_data.email):
+    if await user_service.check_email_exists(user_data.email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="이미 등록된 이메일입니다."
         )
     
     # 사용자 생성
-    user = user_service.create_user(user_data)
-    return user
+    user_dict = await user_service.create_user(user_data)
+    if not user_dict:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="사용자 생성에 실패했습니다."
+        )
+    
+    return User(**user_dict)
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=LoginResponse)
 async def login(
     login_data: LoginRequest,
-    db: Session = Depends(get_db)
+    db: Client = Depends(get_db)
 ):
     """
     사용자 로그인
@@ -58,8 +63,8 @@ async def login(
     user_service = UserService(db)
     
     # 사용자 확인
-    user = user_service.get_user_by_email(login_data.email)
-    if not user or not verify_password(login_data.password, user.password_hash):
+    user_dict = await user_service.get_user_by_email(login_data.email)
+    if not user_dict or not verify_password(login_data.password, user_dict['password_hash']):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="이메일 또는 비밀번호가 올바르지 않습니다.",
@@ -67,28 +72,31 @@ async def login(
         )
     
     # 계정 활성화 확인
-    if not user.is_active:
+    if not user_dict['is_active']:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="비활성화된 계정입니다."
         )
     
     # 토큰 생성
-    access_token = create_access_token(data={"sub": user.email, "user_code": user.user_code})
-    refresh_token = create_refresh_token(data={"sub": user.email, "user_code": user.user_code})
+    access_token = create_access_token(data={"sub": user_dict['email'], "user_code": user_dict['user_code']})
     
     # 로그인 정보 업데이트
-    user_service.update_last_login(user.user_code)
+    await user_service.update_last_login(user_dict['user_code'])
     
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer"
-    }
+    # User 객체 생성
+    user = User(**user_dict)
+    
+    return LoginResponse(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=3600,
+        user=user
+    )
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me", response_model=User)
 async def get_current_user_info(
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     현재 로그인한 사용자 정보 조회
@@ -97,10 +105,10 @@ async def get_current_user_info(
     """
     return current_user
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post("/refresh")
 async def refresh_token(
     refresh_token: str,
-    db: Session = Depends(get_db)
+    db: Client = Depends(get_db)
 ):
     """
     리프레시 토큰으로 새로운 액세스 토큰 발급

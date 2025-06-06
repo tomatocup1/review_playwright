@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}대시보드 - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="container" style="margin-top: 80px;">
+    <h1>대시보드</h1>
+    
+    <div class="row mt-5">
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <i class="fas fa-store fa-3x text-primary mb-3"></i>
+                    <h5 class="card-title">등록된 매장</h5>
+                    <h2 class="text-primary">0</h2>
+                    <a href="/stores" class="btn btn-sm btn-outline-primary">매장 관리</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <i class="fas fa-comments fa-3x text-success mb-3"></i>
+                    <h5 class="card-title">오늘의 리뷰</h5>
+                    <h2 class="text-success">0</h2>
+                    <a href="/reviews" class="btn btn-sm btn-outline-success">리뷰 보기</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <i class="fas fa-reply fa-3x text-info mb-3"></i>
+                    <h5 class="card-title">답글 작성</h5>
+                    <h2 class="text-info">0</h2>
+                    <a href="/reviews" class="btn btn-sm btn-outline-info">답글 관리</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <i class="fas fa-star fa-3x text-warning mb-3"></i>
+                    <h5 class="card-title">평균 평점</h5>
+                    <h2 class="text-warning">-</h2>
+                    <a href="/analytics" class="btn btn-sm btn-outline-warning">분석 보기</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-5">
+        <div class="col-md-12">
+            <h3>빠른 시작</h3>
+            <div class="list-group">
+                <a href="/stores/register" class="list-group-item list-group-item-action">
+                    <i class="fas fa-plus-circle text-primary"></i> 새 매장 등록하기
+                </a>
+                <a href="/stores" class="list-group-item list-group-item-action">
+                    <i class="fas fa-cog text-secondary"></i> 매장 설정 변경하기
+                </a>
+                <a href="/reviews" class="list-group-item list-group-item-action">
+                    <i class="fas fa-eye text-info"></i> 최근 리뷰 확인하기
+                </a>
+                <a href="/settings" class="list-group-item list-group-item-action">
+                    <i class="fas fa-user-cog text-dark"></i> 계정 설정 변경하기
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/auth.js"></script>
+<script>
+    // 대시보드 데이터 로드
+    async function loadDashboardData() {
+        try {
+            // TODO: API에서 실제 데이터 가져오기
+            console.log('대시보드 데이터 로드 중...');
+        } catch (error) {
+            console.error('대시보드 데이터 로드 실패:', error);
+        }
+    }
+    
+    document.addEventListener('DOMContentLoaded', () => {
+        checkAuth(); // 인증 확인
+        loadDashboardData();
+    });
+</script>
+{% endblock %}

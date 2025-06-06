@@ -7,7 +7,7 @@ from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from typing import Optional
 
-from ..auth.utils import get_current_user
+from api.dependencies import get_current_user_optional
 
 # 템플릿 설정
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -40,46 +40,41 @@ async def register_page(request: Request):
     })
 
 @router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request, current_user = Depends(get_current_user)):
+async def dashboard(request: Request):
     """대시보드 (로그인 필요)"""
     return templates.TemplateResponse("dashboard/index.html", {
         "request": request,
-        "title": "대시보드",
-        "user": current_user
+        "title": "대시보드"
     })
 
 @router.get("/stores", response_class=HTMLResponse)
-async def stores_list(request: Request, current_user = Depends(get_current_user)):
+async def stores_list(request: Request):
     """매장 목록 페이지"""
     return templates.TemplateResponse("stores/list.html", {
         "request": request,
-        "title": "매장 관리",
-        "user": current_user
+        "title": "매장 관리"
     })
 
 @router.get("/stores/register", response_class=HTMLResponse)
-async def store_register(request: Request, current_user = Depends(get_current_user)):
+async def store_register(request: Request):
     """매장 등록 페이지"""
-    return templates.TemplateResponse("stores/register.html", {
+    return templates.TemplateResponse("store_register.html", {
         "request": request,
-        "title": "매장 등록",
-        "user": current_user
+        "title": "매장 등록"
     })
 
 @router.get("/reviews", response_class=HTMLResponse)
-async def reviews_list(request: Request, current_user = Depends(get_current_user)):
+async def reviews_list(request: Request):
     """리뷰 목록 페이지"""
     return templates.TemplateResponse("reviews/list.html", {
         "request": request,
-        "title": "리뷰 관리",
-        "user": current_user
+        "title": "리뷰 관리"
     })
 
 @router.get("/settings", response_class=HTMLResponse)
-async def settings(request: Request, current_user = Depends(get_current_user)):
+async def settings(request: Request):
     """설정 페이지"""
     return templates.TemplateResponse("settings/index.html", {
         "request": request,
-        "title": "설정",
-        "user": current_user
+        "title": "설정"
     })
