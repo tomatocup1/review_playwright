@@ -6,11 +6,12 @@ import re
 import asyncio
 from datetime import datetime
 import logging
-from .base_crawler import BaseCrawler
+from pathlib import Path
+from .windows_async_crawler import WindowsAsyncBaseCrawler
 
 logger = logging.getLogger(__name__)
 
-class CoupangCrawler(BaseCrawler):
+class CoupangCrawler(WindowsAsyncBaseCrawler):
     """쿠팡이츠 크롤러"""
     
     def __init__(self, headless: bool = True):
@@ -18,6 +19,26 @@ class CoupangCrawler(BaseCrawler):
         self.login_url = "https://store.coupangeats.com/merchant/login"
         self.reviews_url = "https://store.coupangeats.com/merchant/management/reviews"
         self.current_store_info = {}
+        
+        # 스크린샷 저장 경로
+        self.screenshot_dir = Path("C:/Review_playwright/logs/screenshots/coupang")
+        self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+    
+    async def save_screenshot(self, name: str):
+        """스크린샷 저장"""
+        if not self.page:
+            return
+            
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{name}_{timestamp}.png"
+            filepath = self.screenshot_dir / filename
+            
+            await self.page.screenshot(path=str(filepath))
+            logger.info(f"스크린샷 저장: {filepath}")
+            
+        except Exception as e:
+            logger.error(f"스크린샷 저장 실패: {str(e)}")
     
     async def login(self, username: str, password: str) -> bool:
         """쿠팡이츠 로그인"""
@@ -28,17 +49,23 @@ class CoupangCrawler(BaseCrawler):
             await self.page.goto(self.login_url, wait_until='networkidle')
             await asyncio.sleep(2)
             
-            # 로그인 폼 입력
-            await self.wait_and_type('input[name="email"]', username)
-            await self.wait_and_type('input[name="password"]', password)
+            # 로그인 폼 입력 - 제공된 실제 셀렉터 사용
+            await self.page.fill('#loginId', username)
+            logger.info("아이디 입력 완료")
             
-            # 로그인 버튼 클릭
-            await self.wait_and_click('button[type="submit"]')
+            await self.page.fill('#password', password)
+            logger.info("비밀번호 입력 완료")
             
-            # 로그인 성공 확인
-            await asyncio.sleep(3)
+            # 로그인 버튼 클릭 - 제공된 실제 셀렉터 사용
+            await self.page.click('button[type="submit"].btn.merchant-submit-btn')
+            logger.info("로그인 버튼 클릭")
+            
+            # 로그인 성공 확인 - 더 긴 대기 시간
+            await asyncio.sleep(5)
             
             current_url = self.page.url
+            logger.info(f"로그인 후 URL: {current_url}")
+            
             if 'store.coupangeats.com/merchant' in current_url and 'login' not in current_url:
                 self.logged_in = True
                 logger.info("쿠팡이츠 로그인 성공")
@@ -63,37 +90,64 @@ class CoupangCrawler(BaseCrawler):
             
             # 리뷰 페이지로 이동 (매장 선택이 있는 페이지)
             await self.page.goto(self.reviews_url, wait_until='networkidle')
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
             
             stores = []
             
             # 드롭다운 클릭하여 매장 목록 표시
-            dropdown_elem = await self.page.query_selector('.el0at441.css-1p237v6.emb4idh5')
-            if dropdown_elem:
-                button_elem = await dropdown_elem.query_selector('.button')
-                if button_elem:
-                    await button_elem.click()
+            try:
+                # 더 간단한 셀렉터로 드롭다운 버튼 찾기
+                dropdown_button = await self.page.query_selector('.button')
+                if dropdown_button:
+                    await dropdown_button.click()
                     await asyncio.sleep(1)
+                    logger.info("드롭다운 열기 성공")
+                else:
+                    logger.error("드롭다운 버튼을 찾을 수 없습니다")
+                    await self.save_screenshot("dropdown_not_found")
+            except Exception as e:
+                logger.error(f"드롭다운 클릭 실패: {str(e)}")
             
-            # 매장 목록 가져오기
-            option_items = await self.page.query_selector_all('.el0at441.css-1p237v6.emb4idh5 ul.options li')
+            # 매장 목록 가져오기 - ul.options 안의 li 요소들
+            try:
+                # 옵션 리스트가 나타날 때까지 대기
+                await self.page.wait_for_selector('ul.options', timeout=5000)
+                option_items = await self.page.query_selector_all('ul.options li')
+                
+                if option_items:
+                    logger.info(f"{len(option_items)}개의 매장 옵션 발견")
+                    
+                    for item in option_items:
+                        item_text = await item.text_content()
+                        if item_text:
+                            # "큰집닭강정(708561)" 형식에서 정보 추출
+                            match = re.match(r'(.+)\((\d+)\)', item_text.strip())
+                            if match:
+                                store_name = match.group(1).strip()
+                                platform_code = match.group(2)
+                                
+                                store_info = {
+                                    'platform_code': platform_code,
+                                    'store_name': store_name,
+                                    'platform': 'coupang',
+                                    'store_type': 'delivery_only',  # 기본값
+                                    'category': '',  # 쿠팡이츠는 카테고리 정보가 별도로 없음
+                                    'status': '영업중'  # 기본값
+                                }
+                                stores.append(store_info)
+                                logger.info(f"매장 발견: {store_name} ({platform_code})")
+                else:
+                    logger.warning("매장 옵션을 찾을 수 없습니다")
+                    
+            except Exception as e:
+                logger.error(f"매장 목록 파싱 중 오류: {str(e)}")
+                await self.save_screenshot("store_list_parsing_error")
             
-            for item in option_items:
-                item_text = await item.text_content()
-                if item_text:
-                    # "큰집닭강정(708561)" 형식에서 정보 추출
-                    match = re.match(r'(.+)\((\d+)\)', item_text.strip())
-                    if match:
-                        store_name = match.group(1).strip()
-                        platform_code = match.group(2)
-                        
-                        store_info = {
-                            'platform_code': platform_code,
-                            'store_name': store_name,
-                            'platform': 'coupang'
-                        }
-                        stores.append(store_info)
-                        logger.info(f"매장 발견: {store_name} ({platform_code})")
+            # 드롭다운 닫기 (페이지 다른 곳 클릭)
+            try:
+                await self.page.click('body')
+            except:
+                pass
             
             return stores
             
@@ -115,37 +169,47 @@ class CoupangCrawler(BaseCrawler):
                 await self.page.goto(self.reviews_url, wait_until='networkidle')
                 await asyncio.sleep(2)
             
-            # 현재 선택된 매장 확인
-            hidden_input = await self.page.query_selector('.el0at441.css-1p237v6.emb4idh5 input[type="hidden"]')
-            if hidden_input:
-                current_value = await hidden_input.get_attribute('value')
-                if current_value == platform_code:
-                    logger.info(f"이미 선택된 매장: {platform_code}")
-                    return True
+            # 현재 선택된 매장 확인 - 버튼 텍스트로 확인
+            try:
+                button_elem = await self.page.query_selector('.button')
+                if button_elem:
+                    button_text = await button_elem.text_content()
+                    if button_text and platform_code in button_text:
+                        logger.info(f"이미 선택된 매장: {platform_code}")
+                        return True
+            except:
+                pass
             
             # 드롭다운 열기
-            dropdown_elem = await self.page.query_selector('.el0at441.css-1p237v6.emb4idh5')
-            if dropdown_elem:
-                button_elem = await dropdown_elem.query_selector('.button')
-                if button_elem:
-                    await button_elem.click()
-                    await asyncio.sleep(1)
+            dropdown_button = await self.page.query_selector('.button')
+            if dropdown_button:
+                await dropdown_button.click()
+                await asyncio.sleep(1)
+            else:
+                logger.error("드롭다운 버튼을 찾을 수 없습니다")
+                return False
             
             # 매장 목록에서 해당 매장 찾아 클릭
-            option_items = await self.page.query_selector_all('.el0at441.css-1p237v6.emb4idh5 ul.options li')
-            
-            for item in option_items:
-                item_text = await item.text_content()
-                if item_text and platform_code in item_text:
-                    await item.click()
-                    await asyncio.sleep(2)
-                    logger.info(f"매장 선택 성공: {platform_code}")
-                    # 현재 매장 정보 업데이트
-                    await self.get_store_info()
-                    return True
-            
-            logger.error(f"매장을 찾을 수 없습니다: {platform_code}")
-            return False
+            try:
+                await self.page.wait_for_selector('ul.options', timeout=5000)
+                option_items = await self.page.query_selector_all('ul.options li')
+                
+                for item in option_items:
+                    item_text = await item.text_content()
+                    if item_text and platform_code in item_text:
+                        await item.click()
+                        await asyncio.sleep(2)
+                        logger.info(f"매장 선택 성공: {platform_code}")
+                        # 현재 매장 정보 업데이트
+                        await self.get_store_info()
+                        return True
+                
+                logger.error(f"매장을 찾을 수 없습니다: {platform_code}")
+                return False
+                
+            except Exception as e:
+                logger.error(f"매장 선택 중 오류: {str(e)}")
+                return False
             
         except Exception as e:
             logger.error(f"매장 선택 실패: {str(e)}")
@@ -157,21 +221,15 @@ class CoupangCrawler(BaseCrawler):
             store_info = {}
             
             # 현재 선택된 매장 정보 가져오기
-            dropdown_elem = await self.page.query_selector('.el0at441.css-1p237v6.emb4idh5')
-            if dropdown_elem:
-                # hidden input에서 platform_code 가져오기
-                hidden_input = await dropdown_elem.query_selector('input[type="hidden"]')
-                if hidden_input:
-                    store_info['platform_code'] = await hidden_input.get_attribute('value')
-                
-                # 버튼 텍스트에서 매장명 가져오기
-                button_text_elem = await dropdown_elem.query_selector('.button div')
-                if button_text_elem:
-                    button_text = await button_text_elem.text_content()
-                    # "큰집닭강정(708561)" 형식에서 매장명 추출
+            button_elem = await self.page.query_selector('.button')
+            if button_elem:
+                button_text = await button_elem.text_content()
+                if button_text:
+                    # "큰집닭강정(708561)" 형식에서 매장명과 코드 추출
                     match = re.match(r'(.+)\((\d+)\)', button_text.strip())
                     if match:
                         store_info['store_name'] = match.group(1).strip()
+                        store_info['platform_code'] = match.group(2)
             
             store_info['platform'] = 'coupang'
             
@@ -199,7 +257,7 @@ class CoupangCrawler(BaseCrawler):
                 await asyncio.sleep(2)
             
             # 리뷰 목록 파싱 로직 구현
-            # (실제 HTML 구조에 맞게 수정 필요)
+            # TODO: 실제 리뷰 HTML 구조에 맞게 수정 필요
             
             logger.info(f"리뷰 {len(reviews)}개 수집 완료")
             return reviews
@@ -217,7 +275,7 @@ class CoupangCrawler(BaseCrawler):
                 return False
             
             # 답글 작성 로직 구현
-            # (실제 HTML 구조에 맞게 수정 필요)
+            # TODO: 실제 답글 작성 HTML 구조에 맞게 수정 필요
             
             logger.info(f"리뷰 {review_id}에 답글 작성 성공")
             return True
