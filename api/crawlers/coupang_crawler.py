@@ -7,7 +7,18 @@ import asyncio
 from datetime import datetime
 import logging
 from pathlib import Path
-from .windows_async_crawler import WindowsAsyncBaseCrawler
+import sys
+import os
+
+# 상대 임포트 오류 해결
+try:
+    from .windows_async_crawler import WindowsAsyncBaseCrawler
+except ImportError:
+    # 직접 실행할 때를 위한 처리
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    sys.path.insert(0, parent_dir)
+    from crawlers.windows_async_crawler import WindowsAsyncBaseCrawler
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +50,35 @@ class CoupangCrawler(WindowsAsyncBaseCrawler):
             
         except Exception as e:
             logger.error(f"스크린샷 저장 실패: {str(e)}")
+    
+    async def close_popup(self):
+        """팝업 닫기"""
+        try:
+            # 여러 셀렉터로 팝업 닫기 버튼 찾기
+            popup_selectors = [
+                'button[data-testid="Dialog__CloseButton"]',
+                '.dialog-modal-wrapper__body--close-button',
+                '.dialog-modal-wrapper__body--close-icon--white',
+                'button.dialog-modal-wrapper__body--close-button'
+            ]
+            
+            for selector in popup_selectors:
+                try:
+                    close_button = await self.page.query_selector(selector)
+                    if close_button:
+                        await close_button.click()
+                        logger.info(f"팝업을 닫았습니다 (셀렉터: {selector})")
+                        await asyncio.sleep(1)
+                        return True
+                except:
+                    continue
+            
+            logger.debug("닫을 팝업이 없거나 이미 닫혀있습니다")
+            return False
+            
+        except Exception as e:
+            logger.debug(f"팝업 처리 중 예외 발생: {str(e)}")
+            return False
     
     async def login(self, username: str, password: str) -> bool:
         """쿠팡이츠 로그인"""
@@ -91,6 +131,9 @@ class CoupangCrawler(WindowsAsyncBaseCrawler):
             # 리뷰 페이지로 이동 (매장 선택이 있는 페이지)
             await self.page.goto(self.reviews_url, wait_until='networkidle')
             await asyncio.sleep(3)
+            
+            # 팝업 닫기
+            await self.close_popup()
             
             stores = []
             
@@ -168,6 +211,8 @@ class CoupangCrawler(WindowsAsyncBaseCrawler):
             if 'reviews' not in current_url:
                 await self.page.goto(self.reviews_url, wait_until='networkidle')
                 await asyncio.sleep(2)
+                # 팝업 닫기
+                await self.close_popup()
             
             # 현재 선택된 매장 확인 - 버튼 텍스트로 확인
             try:
@@ -255,6 +300,8 @@ class CoupangCrawler(WindowsAsyncBaseCrawler):
             if 'reviews' not in current_url:
                 await self.page.goto(self.reviews_url, wait_until='networkidle')
                 await asyncio.sleep(2)
+                # 팝업 닫기
+                await self.close_popup()
             
             # 리뷰 목록 파싱 로직 구현
             # TODO: 실제 리뷰 HTML 구조에 맞게 수정 필요
@@ -283,3 +330,45 @@ class CoupangCrawler(WindowsAsyncBaseCrawler):
         except Exception as e:
             logger.error(f"답글 작성 실패: {str(e)}")
             return False
+
+
+# 직접 실행할 때 테스트 코드
+if __name__ == "__main__":
+    # Windows 이벤트 루프 설정
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    
+    # 로깅 설정
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    async def test():
+        # 테스트용 계정 정보 (실제 계정으로 변경 필요)
+        test_id = input("쿠팡이츠 아이디: ")
+        test_pw = input("쿠팡이츠 비밀번호: ")
+        
+        crawler = CoupangCrawler(headless=False)
+        try:
+            await crawler.start_browser()
+            print("브라우저 시작 완료")
+            
+            login_success = await crawler.login(test_id, test_pw)
+            print(f"로그인 결과: {login_success}")
+            
+            if login_success:
+                stores = await crawler.get_store_list()
+                print(f"\n발견된 매장 목록:")
+                for store in stores:
+                    print(f"- {store['store_name']} (코드: {store['platform_code']})")
+            
+        except Exception as e:
+            print(f"오류 발생: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            input("\n브라우저를 닫으려면 Enter를 누르세요...")
+            await crawler.close_browser()
+    
+    asyncio.run(test())
