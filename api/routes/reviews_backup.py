@@ -8,7 +8,6 @@ import logging
 from api.dependencies import get_current_user, get_supabase_service
 from api.services.supabase_service import SupabaseService
 from api.services.review_collector_service import ReviewCollectorService
-from api.schemas.auth import User  # User 스키마 임포트 추가
 from api.schemas.review_schemas import (
     ReviewResponse,
     ReviewCollectRequest,
@@ -29,7 +28,7 @@ router = APIRouter(
 async def collect_reviews(
     request: ReviewCollectRequest,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),  # dict -> User로 변경
+    current_user: dict = Depends(get_current_user),
     supabase: SupabaseService = Depends(get_supabase_service)
 ):
     """
@@ -41,7 +40,7 @@ async def collect_reviews(
     try:
         # 권한 확인
         has_permission = await supabase.check_user_permission(
-            current_user.user_code,  # 딕셔너리 접근 대신 속성 접근
+            current_user['user_code'],
             request.store_code,
             'view'
         )
@@ -91,7 +90,7 @@ async def get_reviews(
     rating: Optional[int] = Query(None, ge=1, le=5, description="별점 필터"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    current_user: User = Depends(get_current_user),  # dict -> User로 변경
+    current_user: dict = Depends(get_current_user),
     supabase: SupabaseService = Depends(get_supabase_service)
 ):
     """
@@ -106,7 +105,7 @@ async def get_reviews(
     try:
         # 권한 확인
         has_permission = await supabase.check_user_permission(
-            current_user.user_code,  # 딕셔너리 접근 대신 속성 접근
+            current_user['user_code'],
             store_code,
             'view'
         )
@@ -136,7 +135,7 @@ async def get_reviews(
 async def post_reply(
     review_id: str,
     request: ReplyRequest,
-    current_user: User = Depends(get_current_user),  # dict -> User로 변경
+    current_user: dict = Depends(get_current_user),
     supabase: SupabaseService = Depends(get_supabase_service)
 ):
     """
@@ -154,7 +153,7 @@ async def post_reply(
         
         # 권한 확인
         has_permission = await supabase.check_user_permission(
-            current_user.user_code,  # 딕셔너리 접근 대신 속성 접근
+            current_user['user_code'],
             review['store_code'],
             'reply'
         )
@@ -175,7 +174,7 @@ async def post_reply(
             status='posted',
             reply_content=request.reply_content,
             reply_type=request.reply_type,
-            reply_by=current_user.user_code  # 딕셔너리 접근 대신 속성 접근
+            reply_by=current_user['user_code']
         )
         
         if update_result:
@@ -198,7 +197,7 @@ async def post_reply(
 @router.get("/stats/{store_code}")
 async def get_review_stats(
     store_code: str,
-    current_user: User = Depends(get_current_user),  # dict -> User로 변경
+    current_user: dict = Depends(get_current_user),
     supabase: SupabaseService = Depends(get_supabase_service)
 ):
     """
@@ -207,7 +206,7 @@ async def get_review_stats(
     try:
         # 권한 확인
         has_permission = await supabase.check_user_permission(
-            current_user.user_code,  # 딕셔너리 접근 대신 속성 접근
+            current_user['user_code'],
             store_code,
             'view'
         )
@@ -230,7 +229,7 @@ async def get_review_stats(
 @router.post("/collect/all")
 async def collect_all_stores_reviews(
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),  # dict -> User로 변경
+    current_user: dict = Depends(get_current_user),
     supabase: SupabaseService = Depends(get_supabase_service)
 ):
     """
@@ -238,7 +237,7 @@ async def collect_all_stores_reviews(
     """
     try:
         # 관리자 권한 확인
-        if current_user.role != 'admin':  # 딕셔너리 접근 대신 속성 접근
+        if current_user['role'] != 'admin':
             raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다")
         
         # 백그라운드에서 실행
