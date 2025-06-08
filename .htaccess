@@ -1,0 +1,10 @@
+RewriteEngine On
+
+# API 요청을 FastAPI 서버로 프록시
+RewriteCond %{REQUEST_URI} ^/playwright/api/(.*)$ [NC]
+RewriteRule ^api/(.*)$ http://localhost:8000/api/$1 [P,L]
+
+# 정적 파일은 그대로 처리
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ http://localhost:8000/$1 [P,L]
