@@ -562,4 +562,4 @@ async def select_reply(
         raise
     except Exception as e:
         logger.error(f"답글 선택 오류: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))# Step 4: ReplyPostingService API Endpoints 
