@@ -1,8 +1,8 @@
 """
-리뷰 관련 스키마 정의
+리뷰 관련 스키마 정의 - ordered_menu 필드 수정
 """
-from pydantic import BaseModel, Field
-from typing import Optional, List
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, List, Union
 from datetime import datetime
 
 
@@ -31,7 +31,7 @@ class ReviewResponse(BaseModel):
     review_name: str
     rating: int
     review_content: str
-    ordered_menu: Optional[str] = None
+    ordered_menu: Optional[Union[str, List[str]]] = None  # str 또는 List[str] 허용
     delivery_review: Optional[str] = None
     review_date: str
     review_images: Optional[List[str]] = []
@@ -40,6 +40,17 @@ class ReviewResponse(BaseModel):
     response_at: Optional[datetime] = None
     boss_reply_needed: bool
     created_at: datetime
+    
+    @field_validator('ordered_menu', mode='before')
+    @classmethod
+    def validate_ordered_menu(cls, v):
+        """ordered_menu 필드를 문자열로 변환"""
+        if v is None:
+            return None
+        if isinstance(v, list):
+            # 리스트인 경우 쉼표로 구분된 문자열로 변환
+            return ', '.join(str(item) for item in v if item)
+        return str(v)
     
     class Config:
         from_attributes = True
