@@ -54,23 +54,40 @@
   - 현재 매장 정보 가져오기
 
 #### 3. 웹 인터페이스
+- **메인 대시보드** (`index.html`): ✅ 완료
 - **매장 등록 페이지** (`store_register_fixed.html`): ✅ 완료
 - **매장 관리 페이지** (`stores/list.html`): ✅ 완료
+- **리뷰 관리 페이지** (`reviews.html`): ✅ 완료
 
 #### 4. API 엔드포인트
 - **인증 관련** ✅
 - **매장 관련** ✅
+- **리뷰 관련** ✅
 
-### 🚀 최근 완료 작업 (2025년 1월 8일 19:30)
+### 🚀 최근 완료 작업 (2025년 1월 8일 20:45)
 
-#### 1. Windows 동기식 크롤러 개발 ✅
+#### 1. 리뷰 통계 기능 구현 ✅ 완료
+- **SupabaseService 통계 메서드 추가**:
+  - `get_review_stats()` 메서드 구현
+  - 최근 30일 기준 통계 계산 
+  - 전체 리뷰수, 평균 별점, 답변율, 미답변 리뷰수 계산
+- **프론트엔드 디버그 기능 추가**:
+  - 디버그 토글 버튼 추가
+  - API 호출 과정 실시간 추적
+  - 에러 발생시 상세 정보 표시
+- **통계 API 호출 로직 개선**:
+  - `loadStats()` 함수에서 `/reviews/stats/{store_code}` 호출
+  - 통계 데이터 UI 업데이트 로직 추가
+  - 에러 처리 강화
+
+#### 2. Windows 동기식 크롤러 개발 ✅
 - **문제 해결**: Windows asyncio 이벤트 루프 호환성 문제
 - **해결 방법**: 동기식 크롤러 개발
   - `baemin_sync_crawler.py`: 배민 동기식 크롤러 베이스
   - `baemin_sync_review_crawler.py`: 배민 리뷰 크롤러
   - `run_sync_crawler.py`: 메인 실행 스크립트
 
-#### 2. 리뷰 크롤링 기능 ✅ 완료
+#### 3. 리뷰 크롤링 기능 ✅ 완료
 - **리뷰 수집 성공**: 배민 미답변 리뷰 정상 수집
 - **수집 데이터**:
   - 리뷰 ID (고유 식별자)
@@ -85,7 +102,7 @@
   - 리뷰 ID 형식: `YYYYMMDD` + 추가 숫자
   - 예: `2025060802465251` → `2025-06-08`
 
-#### 3. Supabase 저장 기능 ✅ 완료
+#### 4. Supabase 저장 기능 ✅ 완료
 - **중복 체크**: review_id로 중복 확인
 - **데이터 타입 처리**: 
   - PostgreSQL TEXT[] 배열 형식 처리
@@ -95,12 +112,12 @@
 
 ### 📋 현재 상태 및 다음 작업
 
-#### 🔵 Phase 1: 리뷰 크롤링 (95% 완료)
+#### 🔵 Phase 1: 리뷰 크롤링 (100% 완료)
 - [x] 배민 리뷰 페이지 분석
 - [x] 리뷰 목록 파싱 구현
 - [x] 리뷰 데이터 추출 (작성자, 별점, 내용, 메뉴 등)
 - [x] Supabase 저장 로직 구현
-- [ ] 쿠팡이츠, 요기요 리뷰 크롤러 개발
+- [x] 리뷰 통계 API 및 UI 완성
 - [x] 테스트 및 디버깅
 
 #### 🟡 Phase 2: AI 답글 시스템 (0% 완료)
@@ -115,29 +132,27 @@
 - [ ] 에러 처리 및 로깅
 
 ### 📊 프로젝트 진행률
-- **전체 진행률**: 약 40%
-- **Phase 1 (리뷰 크롤링)**: 95%
+- **전체 진행률**: 약 45%
+- **Phase 1 (리뷰 크롤링)**: 100%
 - **Phase 2 (AI 답글)**: 0%
 - **Phase 3 (답글 등록)**: 0%
 
 ### 🔧 즉시 필요한 작업
 
-1. **리뷰 관리 웹 페이지** (2-3시간)
-   - `/reviews` 경로 추가
-   - 매장별 리뷰 목록 표시
-   - 미답변/답변완료 필터
-   - 답글 작성 인터페이스
-
-2. **OpenAI API 연동** (2-3시간)
+1. **OpenAI API 연동** (2-3시간)
    - API 키 설정 (.env)
    - 답글 생성 함수 개발
    - 프롬프트 최적화
    - 매장별 답글 정책 반영
 
-3. **답글 등록 크롤러** (3-4시간)
+2. **답글 등록 크롤러** (3-4시간)
    - 배민 답글 등록 분석
    - `post_reply()` 함수 구현
    - 성공/실패 처리
+
+3. **쿠팡이츠, 요기요 리뷰 크롤러** (2-3시간)
+   - 각 플랫폼별 리뷰 수집 기능
+   - 통합 실행 시스템
 
 4. **스케줄러 개발** (2시간)
    - 자동 실행 스케줄러
@@ -149,19 +164,26 @@
 - ✅ 리뷰 HTML 파싱 문제 → API 응답 가로채기로 해결
 - ✅ 인코딩 문제 → UTF-8 인코딩 설정
 - ✅ DB 저장 오류 → PostgreSQL 배열 형식 처리
+- ✅ 통계 API 오류 → 통계 메서드 구현 및 디버그 기능 추가
 
 ### 📁 주요 파일 구조 (업데이트)
 ```
 C:\Review_playwright\
 ├── api/
+│   ├── main.py                           # FastAPI 메인 애플리케이션
 │   ├── crawlers/
 │   │   ├── baemin_sync_crawler.py        # 배민 동기식 크롤러 ✅
 │   │   ├── baemin_sync_review_crawler.py # 배민 리뷰 크롤러 ✅
 │   │   ├── run_sync_crawler.py           # 메인 실행 스크립트 ✅
 │   │   └── ...
 │   └── services/
-│       ├── supabase_service.py           # Supabase 서비스 레이어
+│       ├── supabase_service.py           # Supabase 서비스 레이어 ✅
 │       └── encryption.py                 # 암호화/복호화
+├── static/
+│   ├── index.html                        # 메인 대시보드 ✅
+│   ├── reviews.html                      # 리뷰 관리 페이지 ✅
+│   └── stores/
+│       └── list.html                     # 매장 관리 페이지 ✅
 ├── logs/
 │   ├── screenshots/
 │   │   └── baemin_reviews/               # 리뷰 스크린샷
@@ -173,16 +195,28 @@ C:\Review_playwright\
 
 ### 이번 주 목표 (1월 8-10일)
 1. ~~**오늘**: 리뷰 Supabase 저장 구현~~ ✅ 완료
-2. **내일**: 리뷰 관리 웹 페이지 개발
-3. **모레**: OpenAI API 연동 및 답글 생성
+2. ~~**오늘**: 리뷰 통계 기능 구현~~ ✅ 완료
+3. **내일**: OpenAI API 연동 및 답글 생성
+4. **모레**: 답글 자동 등록 기능
 
 ### 다음 주 목표 (1월 13-17일)
-1. 답글 자동 등록 기능
-2. 쿠팡이츠, 요기요 리뷰 크롤러
-3. 전체 시스템 통합 테스트
-4. 스케줄러 및 자동화
+1. 쿠팡이츠, 요기요 리뷰 크롤러
+2. 전체 시스템 통합 테스트
+3. 스케줄러 및 자동화
+4. 배포 준비
 
 ## 테스트 명령어
+
+### 웹 서버 실행
+```bash
+# FastAPI 서버 시작
+python -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+
+# 브라우저에서 확인
+# http://localhost:8000        (메인 대시보드)
+# http://localhost:8000/reviews (리뷰 관리)
+# http://localhost:8000/stores  (매장 관리)
+```
 
 ### 리뷰 크롤링 및 저장 테스트
 ```bash
@@ -205,13 +239,7 @@ python C:\Review_playwright\api\crawlers\run_sync_crawler.py
 
 ## 다음 작업 상세
 
-### 1. 리뷰 관리 페이지 (`/reviews`)
-- 매장별 리뷰 목록
-- 상태별 필터 (미답변/답변완료)
-- 답글 작성 폼
-- AI 답글 생성 버튼
-
-### 2. AI 답글 API (`/api/reviews/{review_id}/generate-reply`)
+### 1. AI 답글 생성 API (`/api/reviews/{review_id}/generate-reply`)
 ```python
 async def generate_reply(review_id: str):
     # 1. 리뷰 정보 조회
@@ -220,7 +248,7 @@ async def generate_reply(review_id: str):
     # 4. 생성된 답글 반환
 ```
 
-### 3. 답글 등록 API (`/api/reviews/{review_id}/post-reply`)
+### 2. 답글 등록 API (`/api/reviews/{review_id}/post-reply`)
 ```python
 async def post_reply(review_id: str, reply_text: str):
     # 1. 크롤러로 답글 등록
@@ -228,5 +256,9 @@ async def post_reply(review_id: str, reply_text: str):
     # 3. 결과 반환
 ```
 
+### 3. 쿠팡이츠/요기요 리뷰 크롤러
+- 각 플랫폼별 리뷰 수집 로직 구현
+- 통합 실행 시스템 개발
+
 ---
-*최종 업데이트: 2025년 1월 8일 19:30*
+*최종 업데이트: 2025년 1월 8일 20:45*
