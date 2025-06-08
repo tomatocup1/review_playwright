@@ -32,13 +32,53 @@ class SupabaseService:
     async def check_user_permission(self, user_code: str, store_code: str, action: str) -> bool:
         """사용자 권한 확인"""
         try:
-            # PostgreSQL 함수 호출
-            response = self.client.rpc('check_user_permission', {
-                'p_user_code': user_code,
-                'p_store_code': store_code,
-                'p_action': action
-            }).execute()
-            return response.data if response.data else False
+            # 1. 사용자 정보 조회
+            user_response = self.client.table('users').select('role').eq('user_code', user_code).execute()
+            if not user_response.data:
+                return False
+            
+            user_role = user_response.data[0]['role']
+            
+            # 2. 관리자는 모든 권한
+            if user_role == 'admin':
+                return True
+            
+            # 3. 매장 소유자 확인
+            store_response = self.client.table('platform_reply_rules')\
+                .select('owner_user_code')\
+                .eq('store_code', store_code)\
+                .execute()
+            
+            if store_response.data and store_response.data[0]['owner_user_code'] == user_code:
+                return True
+            
+            # 4. 권한 테이블에서 확인
+            permission_query = self.client.table('user_store_permissions')\
+                .select('*')\
+                .eq('user_code', user_code)\
+                .eq('store_code', store_code)\
+                .eq('is_active', True)
+            
+            permission_response = permission_query.execute()
+            
+            if not permission_response.data:
+                return False
+            
+            permission = permission_response.data[0]
+            
+            # 권한 매핑
+            action_map = {
+                'view': 'can_view',
+                'edit': 'can_edit_settings',
+                'reply': 'can_reply',
+                'manage_rules': 'can_manage_rules',
+                'manage_alerts': 'can_manage_alerts',
+                'view_analytics': 'can_view_analytics',
+                'export_data': 'can_export_data'
+            }
+            
+            return permission.get(action_map.get(action, 'can_view'), False)
+            
         except Exception as e:
             logger.error(f"권한 확인 실패: {e}")
             return False
@@ -115,9 +155,16 @@ class SupabaseService:
             # JSON 필드 파싱
             for review in response.data:
                 if review.get('review_images') and isinstance(review['review_images'], str):
-                    review['review_images'] = json.loads(review['review_images'])
+                    try:
+                        review['review_images'] = json.loads(review['review_images'])
+                    except:
+                        review['review_images'] = []
+                        
                 if review.get('ordered_menu') and isinstance(review['ordered_menu'], str):
-                    review['ordered_menu'] = json.loads(review['ordered_menu'])
+                    try:
+                        review['ordered_menu'] = json.loads(review['ordered_menu'])
+                    except:
+                        review['ordered_menu'] = []
                     
             return response.data
         except Exception as e:
@@ -166,9 +213,16 @@ class SupabaseService:
                 review = response.data[0]
                 # JSON 필드 파싱
                 if review.get('review_images') and isinstance(review['review_images'], str):
-                    review['review_images'] = json.loads(review['review_images'])
+                    try:
+                        review['review_images'] = json.loads(review['review_images'])
+                    except:
+                        review['review_images'] = []
+                        
                 if review.get('ordered_menu') and isinstance(review['ordered_menu'], str):
-                    review['ordered_menu'] = json.loads(review['ordered_menu'])
+                    try:
+                        review['ordered_menu'] = json.loads(review['ordered_menu'])
+                    except:
+                        review['ordered_menu'] = []
                 return review
                 
             return None
@@ -226,28 +280,91 @@ class SupabaseService:
     async def update_usage_tracking(self, user_code: str, reviews_increment: int = 0):
         """사용량 추적 업데이트"""
         try:
-            # PostgreSQL 함수 호출
-            self.client.rpc('update_usage', {
-                'p_user_code': user_code,
-                'p_reviews_increment': reviews_increment,
-                'p_ai_api_calls_increment': 0,
-                'p_web_api_calls_increment': 0,
-                'p_manual_replies_increment': 0,
-                'p_error_increment': 0
-            }).execute()
+            # 직접 업데이트 구현 (RPC 대신)
+            current_month = datetime.now().strftime('%Y-%m-01')
+            
+            # 현재 사용량 조회
+            usage_response = self.client.table('usage_tracking')\
+                .select('*')\
+                .eq('user_code', user_code)\
+                .eq('tracking_month', current_month)\
+                .execute()
+            
+            if usage_response.data:
+                # 업데이트
+                current_usage = usage_response.data[0]
+                update_data = {
+                    'reviews_processed': current_usage['reviews_processed'] + reviews_increment,
+                    'last_updated': datetime.now().isoformat()
+                }
+                
+                self.client.table('usage_tracking')\
+                    .update(update_data)\
+                    .eq('user_code', user_code)\
+                    .eq('tracking_month', current_month)\
+                    .execute()
+            else:
+                # 새로 생성
+                insert_data = {
+                    'user_code': user_code,
+                    'tracking_month': current_month,
+                    'reviews_processed': reviews_increment,
+                    'stores_count': 0,
+                    'manual_replies': 0,
+                    'ai_api_calls': 0,
+                    'web_api_calls': 0,
+                    'error_count': 0,
+                    'last_updated': datetime.now().isoformat()
+                }
+                
+                self.client.table('usage_tracking').insert(insert_data).execute()
+                
         except Exception as e:
             logger.error(f"사용량 업데이트 실패: {e}")
     
     async def check_subscription_status(self, user_code: str) -> Dict:
         """구독 상태 확인"""
         try:
-            response = self.client.rpc('check_subscription_status', {
-                'p_user_code': user_code
-            }).execute()
-            return response.data[0] if response.data else {
-                'is_active': False,
-                'remaining_reviews': 0
-            }
+            # 직접 구현 (RPC 대신)
+            subscription_response = self.client.table('subscriptions')\
+                .select('*, pricing_plans(*)')\
+                .eq('user_code', user_code)\
+                .in_('status', ['active', 'trial'])\
+                .gte('end_date', datetime.now().date().isoformat())\
+                .order('end_date', desc=True)\
+                .limit(1)\
+                .execute()
+            
+            if subscription_response.data:
+                sub = subscription_response.data[0]
+                plan = sub['pricing_plans']
+                
+                # 사용량 조회
+                current_month = datetime.now().strftime('%Y-%m-01')
+                usage_response = self.client.table('usage_tracking')\
+                    .select('reviews_processed')\
+                    .eq('user_code', user_code)\
+                    .eq('tracking_month', current_month)\
+                    .execute()
+                
+                reviews_used = usage_response.data[0]['reviews_processed'] if usage_response.data else 0
+                
+                return {
+                    'is_active': True,
+                    'plan_name': plan['plan_name'],
+                    'plan_code': plan['plan_code'],
+                    'end_date': sub['end_date'],
+                    'remaining_reviews': max(0, plan['max_reviews_per_month'] - reviews_used),
+                    'subscription_status': sub['status'],
+                    'days_until_expiry': (datetime.strptime(sub['end_date'], '%Y-%m-%d').date() - datetime.now().date()).days
+                }
+            else:
+                return {
+                    'is_active': False,
+                    'remaining_reviews': 0,
+                    'subscription_status': 'no_subscription'
+                }
+                
         except Exception as e:
             logger.error(f"구독 상태 확인 실패: {e}")
             return {'is_active': False, 'remaining_reviews': 0}
