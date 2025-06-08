@@ -71,6 +71,14 @@ async def reviews_list(request: Request):
         "title": "리뷰 관리"
     })
 
+@router.get("/test-simple", response_class=HTMLResponse)
+async def test_simple(request: Request):
+    """테스트 페이지 (간단 버전)"""
+    return templates.TemplateResponse("test_simple.html", {
+        "request": request,
+        "title": "리뷰 테스트"
+    })
+
 @router.get("/settings", response_class=HTMLResponse)
 async def settings(request: Request):
     """설정 페이지"""
