@@ -1,25 +1,29 @@
 """
-Step 4: ReplyPostingService - 간단 테스트용 구현
+Step 5: ReplyPostingService - 실제 플랫폼 연동 구현
 
-실제 플랫폼 연동 대신 더미 응답을 제공하여 API 테스트가 가능하도록 합니다.
+배달의민족, 요기요, 쿠팡이츠 플랫폼에 실제 답글을 등록하는 서비스
+Playwright를 활용한 브라우저 자동화로 실제 플랫폼과 연동
 """
 import asyncio
 import logging
+import traceback
+import time
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-import time
-import random
 
 from api.services.supabase_service import SupabaseService
+from api.services.encryption import decrypt_password
+from api.crawlers.baemin_reply_manager import BaeminReplyManager
 
 logger = logging.getLogger(__name__)
 
 
 class ReplyPostingService:
     """
-    답글 등록 서비스 클래스 (테스트용 간단 구현)
+    실제 플랫폼 연동 답글 등록 서비스 클래스
     
-    실제 플랫폼 연동 대신 더미 데이터를 사용하여 API 테스트를 지원합니다.
+    Step 4에서 구현된 API와 호환되며, 실제 브라우저 자동화를 통해
+    배민, 요기요, 쿠팡이츠에 답글을 등록합니다.
     """
     
     def __init__(self, supabase_service: SupabaseService):
@@ -32,10 +36,14 @@ class ReplyPostingService:
         self.supabase = supabase_service
         self.logger = logger
         
-        # 테스트용 설정값들
+        # 실제 운영 설정값들
         self.MAX_RETRY_COUNT = 3
-        self.RETRY_DELAY_SECONDS = 1  # 테스트용으로 짧게
-        self.PROCESSING_TIMEOUT = 30  # 테스트용으로 짧게
+        self.RETRY_DELAY_SECONDS = 5
+        self.PROCESSING_TIMEOUT = 120  # 2분
+        self.BROWSER_TIMEOUT = 30  # 브라우저 작업 타임아웃
+        
+        # 지원하는 플랫폼 목록
+        self.SUPPORTED_PLATFORMS = ['baemin', 'yogiyo', 'coupang']
         
     async def post_single_reply(
         self, 
@@ -44,7 +52,7 @@ class ReplyPostingService:
         user_code: str
     ) -> Dict[str, Any]:
         """
-        단일 답글을 실제 플랫폼에 등록 (테스트용 더미 구현)
+        단일 답글을 실제 플랫폼에 등록
         
         Args:
             review_id: 리뷰 ID
@@ -57,154 +65,410 @@ class ReplyPostingService:
         start_time = time.time()
         
         try:
-            self.logger.info(f"답글 등록 시작: review_id={review_id}, user={user_code}")
+            self.logger.info(f"실제 답글 등록 시작: review_id={review_id}, user={user_code}")
             
             # 1. 기본 검증
-            if not reply_content or not reply_content.strip():
+            validation_result = self._validate_reply_request(review_id, reply_content, user_code)
+            if not validation_result['valid']:
                 return {
                     'success': False,
-                    'error': '답글 내용이 비어있습니다',
+                    'error': validation_result['error'],
                     'review_id': review_id
                 }
             
-            # 2. 테스트용 가짜 처리 시간 (1-3초)
-            processing_delay = random.uniform(1, 3)
-            await asyncio.sleep(processing_delay)
-            
-            # 3. 테스트용 성공/실패 결정 (90% 성공률)
-            success_rate = 0.9
-            is_success = random.random() < success_rate
-            
-            processing_time = int((time.time() - start_time) * 1000)
-            
-            if is_success:
-                # 성공 케이스
-                self.logger.info(f"답글 등록 성공: review_id={review_id}")
-                return {
-                    'success': True,
-                    'review_id': review_id,
-                    'platform': 'test_platform',
-                    'store_name': 'Test Store',
-                    'processing_time': processing_time,
-                    'final_status': 'posted',
-                    'message': '테스트용 답글 등록 성공'
-                }
-            else:
-                # 실패 케이스
-                error_messages = [
-                    '네트워크 연결 오류',
-                    '플랫폼 서버 응답 없음',
-                    '로그인 정보 오류',
-                    '임시 서버 오류'
-                ]
-                error_msg = random.choice(error_messages)
-                
-                self.logger.warning(f"답글 등록 실패: review_id={review_id}, error={error_msg}")
+            # 2. 리뷰 정보 및 매장 정보 조회
+            review_data = await self._get_review_data(review_id)
+            if not review_data:
                 return {
                     'success': False,
-                    'error': f'테스트용 실패: {error_msg}',
-                    'review_id': review_id,
-                    'error_details': {'test_mode': True, 'simulated_error': error_msg},
-                    'retry_count': 1,
-                    'can_retry': True,
-                    'processing_time': processing_time
+                    'error': '리뷰 정보를 찾을 수 없습니다',
+                    'review_id': review_id
                 }
-                
+            
+            # 3. 매장 로그인 정보 조회
+            store_config = await self._get_store_config(review_data['store_code'])
+            if not store_config:
+                return {
+                    'success': False,
+                    'error': '매장 정보를 찾을 수 없습니다',
+                    'review_id': review_id
+                }
+            
+            # 4. 플랫폼 지원 여부 확인
+            platform = review_data.get('platform', '').lower()
+            if platform not in self.SUPPORTED_PLATFORMS:
+                return {
+                    'success': False,
+                    'error': f'지원하지 않는 플랫폼입니다: {platform}',
+                    'review_id': review_id,
+                    'platform': platform
+                }
+            
+            # 5. 실제 답글 등록 수행
+            posting_result = await self._perform_reply_posting(
+                review_data, 
+                store_config, 
+                reply_content,
+                user_code
+            )
+            
+            # 6. 결과 DB 업데이트
+            await self._update_reply_status(review_id, posting_result, user_code)
+            
+            processing_time = int((time.time() - start_time) * 1000)
+            posting_result['processing_time'] = processing_time
+            
+            if posting_result['success']:
+                self.logger.info(f"실제 답글 등록 성공: review_id={review_id}, platform={platform}")
+            else:
+                self.logger.warning(f"답글 등록 실패: review_id={review_id}, error={posting_result.get('error')}")
+            
+            return posting_result
+            
         except Exception as e:
-            self.logger.error(f"답글 등록 중 예외 발생: {e}")
+            error_msg = f"답글 등록 중 예외 발생: {str(e)}"
+            self.logger.error(f"{error_msg}\n{traceback.format_exc()}")
+            
+            # 예외 발생시 DB 상태 업데이트
+            try:
+                await self._update_reply_status(review_id, {
+                    'success': False,
+                    'error': error_msg,
+                    'final_status': 'failed'
+                }, user_code)
+            except:
+                pass  # DB 업데이트 실패는 무시
             
             return {
                 'success': False,
-                'error': f'시스템 오류: {str(e)}',
+                'error': error_msg,
                 'review_id': review_id,
                 'processing_time': int((time.time() - start_time) * 1000)
             }
-    
-    async def get_pending_replies(
-        self, 
-        store_code: str, 
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
+
+    def _validate_reply_request(self, review_id: str, reply_content: str, user_code: str) -> Dict[str, Any]:
         """
-        매장의 처리 대기 중인 답글 목록 조회 (테스트용 더미 데이터)
+        답글 등록 요청 유효성 검증
+        
+        Args:
+            review_id: 리뷰 ID
+            reply_content: 답글 내용
+            user_code: 사용자 코드
+            
+        Returns:
+            Dict: {'valid': bool, 'error': str}
+        """
+        try:
+            # 필수 파라미터 검증
+            if not review_id or not review_id.strip():
+                return {'valid': False, 'error': '리뷰 ID가 없습니다'}
+            
+            if not reply_content or not reply_content.strip():
+                return {'valid': False, 'error': '답글 내용이 비어있습니다'}
+                
+            if not user_code or not user_code.strip():
+                return {'valid': False, 'error': '사용자 코드가 없습니다'}
+            
+            # 답글 길이 검증
+            if len(reply_content.strip()) > 1000:
+                return {'valid': False, 'error': '답글 내용이 너무 깁니다 (최대 1000자)'}
+                
+            if len(reply_content.strip()) < 2:
+                return {'valid': False, 'error': '답글 내용이 너무 짧습니다 (최소 2자)'}
+            
+            return {'valid': True, 'error': ''}
+            
+        except Exception as e:
+            return {'valid': False, 'error': f'검증 중 오류: {str(e)}'}
+    
+    async def _get_review_data(self, review_id: str) -> Optional[Dict[str, Any]]:
+        """
+        리뷰 데이터 조회
+        
+        Args:
+            review_id: 리뷰 ID
+            
+        Returns:
+            Dict: 리뷰 데이터 (store_code, platform, review_content 등)
+        """
+        try:
+            # Supabase에서 리뷰 정보 조회
+            result = await self.supabase.get_review_by_id(review_id)
+            
+            if not result or not result.get('data'):
+                self.logger.warning(f"리뷰 조회 실패: review_id={review_id}")
+                return None
+            
+            review_data = result['data']
+            
+            # 필수 필드 확인
+            required_fields = ['store_code', 'platform']
+            for field in required_fields:
+                if not review_data.get(field):
+                    self.logger.warning(f"리뷰 데이터 누락 필드: {field}, review_id={review_id}")
+                    return None
+            
+            self.logger.info(f"리뷰 데이터 조회 성공: review_id={review_id}, platform={review_data.get('platform')}")
+            return review_data
+            
+        except Exception as e:
+            self.logger.error(f"리뷰 데이터 조회 중 오류: {e}")
+            return None
+    
+    async def _get_store_config(self, store_code: str) -> Optional[Dict[str, Any]]:
+        """
+        매장 설정 정보 조회 (로그인 정보 포함)
         
         Args:
             store_code: 매장 코드
-            limit: 조회할 답글 수
             
         Returns:
-            List[Dict]: 대기 중인 답글 목록
+            Dict: 매장 설정 정보
         """
         try:
-            # 테스트용 더미 데이터 생성
-            dummy_reviews = []
+            # Supabase에서 매장 정보 조회
+            result = await self.supabase.get_store_by_code(store_code)
             
-            for i in range(min(limit, 5)):  # 최대 5개의 더미 리뷰
-                dummy_reviews.append({
-                    'review_id': f'test_review_{store_code}_{i+1}',
-                    'store_code': store_code,
-                    'platform': 'test_platform',
-                    'review_content': f'테스트 리뷰 내용 {i+1}',
-                    'rating': random.randint(1, 5),
-                    'review_date': datetime.now().strftime('%Y-%m-%d'),
-                    'ai_response': f'테스트용 AI 답글 {i+1}: 안녕하세요! 소중한 리뷰 감사합니다.',
-                    'manual_response': None,
-                    'response_status': 'ready_to_post',
-                    'created_at': datetime.now().isoformat()
-                })
+            if not result or not result.get('data'):
+                self.logger.warning(f"매장 조회 실패: store_code={store_code}")
+                return None
             
-            self.logger.info(f"더미 대기 답글 {len(dummy_reviews)}개 반환: store_code={store_code}")
-            return dummy_reviews
+            store_data = result['data']
             
+            # 필수 필드 확인
+            required_fields = ['platform_id', 'platform_pw', 'platform', 'store_name']
+            for field in required_fields:
+                if not store_data.get(field):
+                    self.logger.warning(f"매장 데이터 누락 필드: {field}, store_code={store_code}")
+                    return None
+            
+            # 로그인 비밀번호 복호화
+            try:
+                decrypted_password = decrypt_password(store_data['platform_pw'])
+                store_data['platform_pw'] = decrypted_password
+            except Exception as e:
+                self.logger.error(f"비밀번호 복호화 실패: {e}")
+                return None
+            
+            self.logger.info(f"매장 설정 조회 성공: store_code={store_code}, platform={store_data.get('platform')}")
+            return store_data
+            
+        except Exception as e:
+            self.logger.error(f"매장 설정 조회 중 오류: {e}")
+            return None
+
+    async def _perform_reply_posting(
+        self,
+        review_data: Dict[str, Any],
+        store_config: Dict[str, Any],
+        reply_content: str,
+        user_code: str
+    ) -> Dict[str, Any]:
+        """
+        실제 답글 등록 수행
+        
+        Args:
+            review_data: 리뷰 데이터
+            store_config: 매장 설정 정보
+            reply_content: 답글 내용
+            user_code: 사용자 코드
+            
+        Returns:
+            Dict: 등록 결과
+        """
+        platform = store_config['platform'].lower()
+        
+        try:
+            self.logger.info(f"플랫폼 답글 등록 시작: platform={platform}, review_id={review_data.get('review_id')}")
+            
+            # 현재는 배민만 지원
+            if platform == 'baemin':
+                return await self._post_baemin_reply(review_data, store_config, reply_content)
+            elif platform == 'yogiyo':
+                return {
+                    'success': False,
+                    'error': '요기요 답글 등록은 아직 구현되지 않았습니다',
+                    'review_id': review_data.get('review_id'),
+                    'platform': platform
+                }
+            elif platform == 'coupang':
+                return {
+                    'success': False,
+                    'error': '쿠팡이츠 답글 등록은 아직 구현되지 않았습니다',
+                    'review_id': review_data.get('review_id'),
+                    'platform': platform
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f'지원하지 않는 플랫폼: {platform}',
+                    'review_id': review_data.get('review_id'),
+                    'platform': platform
+                }
+                
+        except Exception as e:
+            error_msg = f"답글 등록 수행 중 오류: {str(e)}"
+            self.logger.error(f"{error_msg}\n{traceback.format_exc()}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'review_id': review_data.get('review_id'),
+                'platform': platform
+            }
+
+    async def _post_baemin_reply(
+        self,
+        review_data: Dict[str, Any],
+        store_config: Dict[str, Any],
+        reply_content: str
+    ) -> Dict[str, Any]:
+        """
+        배민 답글 등록
+        
+        Args:
+            review_data: 리뷰 데이터
+            store_config: 매장 설정
+            reply_content: 답글 내용
+            
+        Returns:
+            Dict: 등록 결과
+        """
+        reply_manager = None
+        review_id = review_data.get('review_id', 'unknown')
+        
+        try:
+            self.logger.info(f"배민 답글 등록 시작: review_id={review_id}")
+            
+            # BaeminReplyManager 인스턴스 생성
+            reply_manager = BaeminReplyManager(store_config)
+            
+            # 브라우저 설정 및 초기화
+            if not reply_manager.setup_browser(headless=True):
+                return {
+                    'success': False,
+                    'error': '브라우저 초기화 실패',
+                    'review_id': review_id,
+                    'platform': 'baemin'
+                }
+            
+            # 로그인
+            login_success, login_message = reply_manager.login_to_platform()
+            if not login_success:
+                return {
+                    'success': False,
+                    'error': f'로그인 실패: {login_message}',
+                    'review_id': review_id,
+                    'platform': 'baemin'
+                }
+            
+            # 리뷰 관리 페이지로 이동
+            nav_success, nav_message = reply_manager.navigate_to_reviews_page()
+            if not nav_success:
+                return {
+                    'success': False,
+                    'error': f'리뷰 페이지 이동 실패: {nav_message}',
+                    'review_id': review_id,
+                    'platform': 'baemin'
+                }
+            
+            # 답글 등록 수행
+            reply_result = reply_manager.manage_reply(
+                review_id=review_id,
+                reply_text=reply_content,
+                action="auto"
+            )
+            
+            if reply_result['success']:
+                self.logger.info(f"배민 답글 등록 성공: review_id={review_id}, action={reply_result.get('action_taken')}")
+                return {
+                    'success': True,
+                    'review_id': review_id,
+                    'platform': 'baemin',
+                    'store_name': store_config.get('store_name', ''),
+                    'final_status': 'posted',
+                    'action_taken': reply_result.get('action_taken', 'posted'),
+                    'message': reply_result.get('message', '답글 등록 성공')
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': reply_result.get('message', '답글 등록 실패'),
+                    'review_id': review_id,
+                    'platform': 'baemin',
+                    'error_details': reply_result
+                }
+                
+        except Exception as e:
+            error_msg = f"배민 답글 등록 중 예외: {str(e)}"
+            self.logger.error(f"{error_msg}\n{traceback.format_exc()}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'review_id': review_id,
+                'platform': 'baemin'
+            }
+        finally:
+            # 브라우저 정리
+            if reply_manager:
+                try:
+                    reply_manager.close_browser()
+                except:
+                    pass
+
+    async def _update_reply_status(
+        self,
+        review_id: str,
+        posting_result: Dict[str, Any],
+        user_code: str
+    ) -> None:
+        """
+        답글 등록 결과를 DB에 업데이트
+        
+        Args:
+            review_id: 리뷰 ID
+            posting_result: 답글 등록 결과
+            user_code: 사용자 코드
+        """
+        try:
+            update_data = {
+                'response_status': posting_result.get('final_status', 'failed' if not posting_result['success'] else 'posted'),
+                'response_at': datetime.now().isoformat() if posting_result['success'] else None,
+                'response_by': user_code,
+                'error_message': posting_result.get('error') if not posting_result['success'] else None,
+                'updated_at': datetime.now().isoformat()
+            }
+            
+            # 성공시 final_response 업데이트
+            if posting_result['success'] and 'reply_content' in posting_result:
+                update_data['final_response'] = posting_result['reply_content']
+            
+            await self.supabase.update_review_status(review_id, update_data)
+            self.logger.info(f"리뷰 상태 업데이트 완료: review_id={review_id}, status={update_data['response_status']}")
+            
+        except Exception as e:
+            self.logger.error(f"리뷰 상태 업데이트 실패: review_id={review_id}, error={e}")
+
+    # Step 4 호환성을 위한 기존 메서드들 (간소화된 구현)
+    async def get_pending_replies(self, store_code: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """매장의 처리 대기 중인 답글 목록 조회"""
+        try:
+            result = await self.supabase.get_pending_reviews(store_code, limit)
+            return result.get('data', []) if result else []
         except Exception as e:
             self.logger.error(f"대기 답글 조회 중 오류: {e}")
             return []
-    
-    async def process_store_replies(
-        self, 
-        store_code: str, 
-        user_code: str, 
-        max_replies: int = 10
-    ) -> Dict[str, Any]:
-        """
-        특정 매장의 답글들을 일괄 처리 (테스트용)
-        
-        Args:
-            store_code: 매장 코드
-            user_code: 처리하는 사용자 코드
-            max_replies: 최대 처리할 답글 수
-            
-        Returns:
-            Dict: 처리 결과 요약
-        """
+
+    async def process_store_replies(self, store_code: str, user_code: str, max_replies: int = 10) -> Dict[str, Any]:
+        """특정 매장의 답글들을 일괄 처리"""
         try:
-            self.logger.info(f"매장 답글 일괄 처리 시작: store_code={store_code}, max={max_replies}")
-            
-            # 대기 중인 답글 조회
             pending_reviews = await self.get_pending_replies(store_code, max_replies)
-            
-            if not pending_reviews:
-                return {
-                    'success': True,
-                    'store_code': store_code,
-                    'processed_count': 0,
-                    'success_count': 0,
-                    'failed_count': 0,
-                    'message': '처리할 답글이 없습니다'
-                }
-            
-            # 각 답글 순차 처리
-            results = {
-                'processed_count': 0,
-                'success_count': 0,
-                'failed_count': 0,
-                'details': []
-            }
+            results = {'processed_count': 0, 'success_count': 0, 'failed_count': 0, 'details': []}
             
             for review in pending_reviews:
                 reply_content = review.get('ai_response') or review.get('manual_response', '')
-                
-                # 개별 답글 등록
+                if not reply_content:
+                    continue
+                    
                 result = await self.post_single_reply(
                     review_id=review['review_id'],
                     reply_content=reply_content,
@@ -212,7 +476,6 @@ class ReplyPostingService:
                 )
                 
                 results['processed_count'] += 1
-                
                 if result['success']:
                     results['success_count'] += 1
                 else:
@@ -224,69 +487,29 @@ class ReplyPostingService:
                     'error': result.get('error') if not result['success'] else None
                 })
                 
-                # 답글 간 간격 (테스트용으로 짧게)
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(2)  # 답글 간 간격
             
-            self.logger.info(f"매장 답글 일괄 처리 완료: store_code={store_code}, 성공={results['success_count']}, 실패={results['failed_count']}")
-            
-            return {
-                'success': True,
-                'store_code': store_code,
-                **results
-            }
+            return {'success': True, 'store_code': store_code, **results}
             
         except Exception as e:
             self.logger.error(f"매장 답글 일괄 처리 중 오류: {e}")
-            return {
-                'success': False,
-                'store_code': store_code,
-                'error': str(e)
-            }
-    
-    async def process_all_stores_replies(
-        self, 
-        user_code: str, 
-        max_per_store: int = 5
-    ) -> Dict[str, Any]:
-        """
-        모든 활성 매장의 답글들을 일괄 처리 (테스트용)
-        
-        Args:
-            user_code: 처리하는 사용자 코드
-            max_per_store: 매장당 최대 처리할 답글 수
-            
-        Returns:
-            Dict: 전체 처리 결과 요약
-        """
+            return {'success': False, 'store_code': store_code, 'error': str(e)}
+
+    async def process_all_stores_replies(self, user_code: str, max_per_store: int = 5) -> Dict[str, Any]:
+        """모든 활성 매장의 답글들을 일괄 처리"""
         try:
-            self.logger.info(f"전체 매장 답글 일괄 처리 시작: user={user_code}, max_per_store={max_per_store}")
+            # 사용자의 활성 매장 목록 조회
+            stores_result = await self.supabase.get_user_stores(user_code)
+            stores = stores_result.get('data', []) if stores_result else []
             
-            # 테스트용 더미 매장 목록
-            test_stores = [
-                {'store_code': 'TEST_STORE_001', 'store_name': '테스트 맛집1', 'platform': 'baemin'},
-                {'store_code': 'TEST_STORE_002', 'store_name': '테스트 치킨집', 'platform': 'yogiyo'},
-                {'store_code': 'TEST_STORE_003', 'store_name': '테스트 피자집', 'platform': 'coupang'}
-            ]
+            total_results = {'processed_stores': 0, 'total_processed': 0, 'total_success': 0, 'total_failed': 0, 'store_results': []}
             
-            # 전체 결과 집계
-            total_results = {
-                'processed_stores': 0,
-                'total_processed': 0,
-                'total_success': 0,
-                'total_failed': 0,
-                'store_results': []
-            }
-            
-            # 각 매장별 순차 처리
-            for store in test_stores:
-                store_code = store['store_code']
-                
-                # 매장별 처리
-                store_result = await self.process_store_replies(
-                    store_code=store_code,
-                    user_code=user_code,
-                    max_replies=max_per_store
-                )
+            for store in stores:
+                store_code = store.get('store_code')
+                if not store_code:
+                    continue
+                    
+                store_result = await self.process_store_replies(store_code, user_code, max_per_store)
                 
                 if store_result['success'] and store_result['processed_count'] > 0:
                     total_results['processed_stores'] += 1
@@ -302,69 +525,21 @@ class ReplyPostingService:
                     'success': store_result['success_count'],
                     'failed': store_result['failed_count']
                 })
-                
-                # 매장 간 간격
-                await asyncio.sleep(0.3)
             
-            self.logger.info(f"전체 매장 답글 처리 완료: 총 {total_results['total_processed']}개 처리")
-            
-            return {
-                'success': True,
-                **total_results
-            }
+            return {'success': True, **total_results}
             
         except Exception as e:
             self.logger.error(f"전체 매장 답글 처리 중 오류: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
+            return {'success': False, 'error': str(e)}
+
     async def get_reply_tracking_status(self, review_id: str) -> Dict[str, Any]:
-        """
-        답글 처리 상태 상세 정보 조회 (테스트용)
-        
-        Args:
-            review_id: 리뷰 ID
-            
-        Returns:
-            Dict: 상태 추적 정보
-        """
+        """답글 처리 상태 상세 정보 조회"""
         try:
-            # 테스트용 더미 상태 정보
-            dummy_history = [
-                {
-                    'id': 1,
-                    'generation_type': 'ai_initial',
-                    'generated_content': '테스트용 AI 답글입니다.',
-                    'quality_score': 0.85,
-                    'processing_time_ms': 1500,
-                    'token_usage': 150,
-                    'is_selected': True,
-                    'created_at': datetime.now().isoformat()
-                }
-            ]
-            
-            stats = {
-                'total_attempts': len(dummy_history),
-                'last_attempt': dummy_history[0] if dummy_history else None,
-                'processing_time_total': sum(h.get('processing_time_ms', 0) for h in dummy_history),
-                'token_usage_total': sum(h.get('token_usage', 0) for h in dummy_history)
-            }
-            
-            return {
-                'review_id': review_id,
-                'current_status': 'ready_to_post',
-                'generation_history': dummy_history,
-                'statistics': stats,
-                'can_retry': True,
-                'last_updated': datetime.now().isoformat(),
-                'test_mode': True
-            }
-            
+            result = await self.supabase.get_review_status(review_id)
+            return result.get('data', {}) if result else {}
         except Exception as e:
             self.logger.error(f"답글 상태 조회 중 오류: {e}")
-            return {'error': str(e), 'test_mode': True}
+            return {'error': str(e)}
 
 
 # 싱글톤 패턴으로 서비스 인스턴스 관리
