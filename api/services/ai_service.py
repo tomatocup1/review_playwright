@@ -1,5 +1,5 @@
 """
-OpenAI 답글 생성 서비스 - 매장 정책 반영
+OpenAI 답글 생성 서비스 - 매장 정책 반영 (오류 수정)
 """
 import os
 import time
@@ -55,7 +55,12 @@ class AIService:
                 max_tokens=self.max_tokens
             )
             
-            generated_reply = response.choices[0].message.content.strip()
+            generated_reply = response.choices[0].message.content
+            if generated_reply:
+                generated_reply = generated_reply.strip()
+            else:
+                generated_reply = ""
+            
             token_usage = response.usage.total_tokens if response.usage else 0
             processing_time_ms = int((time.time() - start_time) * 1000)
             
@@ -111,10 +116,10 @@ class AIService:
     
     def _create_system_prompt(self, store_rules: Dict[str, Any]) -> str:
         """시스템 프롬프트 생성 (매장 정책 반영)"""
-        role = store_rules.get('role', '친절한 사장님')
-        tone = store_rules.get('tone', '친근함')
-        max_length = store_rules.get('max_length', 300)
-        store_name = store_rules.get('store_name', '저희 매장')
+        role = store_rules.get('role', '친절한 사장님') or '친절한 사장님'
+        tone = store_rules.get('tone', '친근함') or '친근함'
+        max_length = store_rules.get('max_length', 300) or 300
+        store_name = store_rules.get('store_name', '저희 매장') or '저희 매장'
         
         tone_instructions = self._get_tone_instructions(tone)
         
@@ -136,12 +141,12 @@ class AIService:
 
 매장 정보:
 - 매장명: {store_name}
-- 플랫폼: {store_rules.get('platform', '배달앱')}
+- 플랫폼: {store_rules.get('platform', '배달앱') or '배달앱'}
 """
         
         # 금지어가 있는 경우 추가
         prohibited_words = store_rules.get('prohibited_words', [])
-        if prohibited_words:
+        if prohibited_words and isinstance(prohibited_words, list):
             system_prompt += f"\n추가 금지어: {', '.join(prohibited_words)}"
         
         return system_prompt
@@ -153,10 +158,10 @@ class AIService:
     ) -> str:
         """프롬프트 생성 (리뷰 내용 반영)"""
         rating = review_data.get('rating', 5)
-        content = review_data.get('review_content', '')
-        menu = review_data.get('ordered_menu', '')
-        name = review_data.get('review_name', '고객')
-        delivery_review = review_data.get('delivery_review', '')
+        content = review_data.get('review_content', '') or ''
+        menu = review_data.get('ordered_menu', '') or ''
+        name = review_data.get('review_name', '고객') or '고객'
+        delivery_review = review_data.get('delivery_review', '') or ''
         
         prompt = f"""다음 리뷰에 대한 답글을 작성해주세요:
 
@@ -229,9 +234,14 @@ class AIService:
         reply: str, 
         store_rules: Dict[str, Any]
     ) -> str:
-        """매장별 형식 적용"""
-        greeting_start = store_rules.get('greeting_start', '').strip()
-        greeting_end = store_rules.get('greeting_end', '').strip()
+        """매장별 형식 적용 (None 체크 추가)"""
+        # None 체크 및 기본값 처리
+        greeting_start = store_rules.get('greeting_start') or ''
+        greeting_end = store_rules.get('greeting_end') or ''
+        
+        # 안전하게 strip() 호출
+        greeting_start = greeting_start.strip() if greeting_start else ''
+        greeting_end = greeting_end.strip() if greeting_end else ''
         
         # 시작 인사가 이미 포함되어 있지 않은 경우에만 추가
         if greeting_start and not reply.startswith(greeting_start):
@@ -242,7 +252,7 @@ class AIService:
             reply = f"{reply} {greeting_end}"
         
         # 최대 길이 제한
-        max_length = store_rules.get('max_length', 300)
+        max_length = store_rules.get('max_length', 300) or 300
         if len(reply) > max_length:
             # 마무리 인사를 보존하면서 자르기
             if greeting_end:
@@ -264,9 +274,16 @@ class AIService:
         is_valid = True
         rating = review_data.get('rating', 5)
         
+        # 답글이 비어있는지 확인
+        if not reply or not reply.strip():
+            score = 0.0
+            is_valid = False
+            logger.error("생성된 답글이 비어있습니다")
+            return is_valid, score
+        
         # 길이 체크
         min_length = 20
-        max_length = store_rules.get('max_length', 300)
+        max_length = store_rules.get('max_length', 300) or 300
         
         if len(reply) < min_length:
             score -= 0.4
@@ -292,12 +309,13 @@ class AIService:
         
         # 매장별 금지어 체크
         prohibited_words = store_rules.get('prohibited_words', [])
-        for word in prohibited_words:
-            if word in reply:
-                score = 0
-                is_valid = False
-                logger.error(f"매장 금지어 발견: {word}")
-                break
+        if prohibited_words and isinstance(prohibited_words, list):
+            for word in prohibited_words:
+                if word and word in reply:
+                    score = 0
+                    is_valid = False
+                    logger.error(f"매장 금지어 발견: {word}")
+                    break
         
         # 일반 금지어 체크
         general_forbidden = ['싫', '별로', '최악', '쓰레기', '더럽', '짜증']
@@ -309,7 +327,7 @@ class AIService:
                 break
         
         # 품질 임계점 확인
-        threshold = store_rules.get('manual_review_threshold', 0.3)
+        threshold = store_rules.get('manual_review_threshold', 0.3) or 0.3
         if score < threshold:
             is_valid = False
             logger.warning(f"품질 점수가 임계점 미만: {score} < {threshold}")
