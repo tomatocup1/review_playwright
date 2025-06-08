@@ -100,7 +100,7 @@ async def crawl_platform_stores(
         # 실제 크롤링 모드
         logger.info(f"실제 크롤링 시작: {request.platform.value}")
         
-        # 크롤러 인스턴스 생성
+        # 크롤러 인스턴스 생성 - headless=True로 변경
         async with get_crawler(request.platform.value, headless=True) as crawler:
             # 로그인
             login_success = await crawler.login(request.platform_id, request.platform_pw)
@@ -141,7 +141,6 @@ async def crawl_platform_stores(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"매장 정보 크롤링 중 오류가 발생했습니다: {str(e)}"
         )
-
 
 @router.post("/register", response_model=StoreRegisterResponse)
 async def register_store(

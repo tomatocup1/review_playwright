@@ -5,21 +5,39 @@ import os
 import sys
 import asyncio
 from pathlib import Path
+from datetime import datetime  # datetime 추가
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
+import nest_asyncio
 
-# Windows에서 asyncio 이벤트 루프 정책 설정
+# Windows 전용 설정
 if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    # ProactorEventLoop 대신 SelectorEventLoop 사용
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-# 로깅 설정
+# asyncio 중첩 실행 허용
+nest_asyncio.apply()
+
+# 프로젝트 루트 경로
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# 로그 디렉토리 생성
+log_dir = os.path.join(BASE_DIR, 'logs')
+os.makedirs(log_dir, exist_ok=True)
+
+# 로깅 설정 개선
+log_file = os.path.join(log_dir, f'app_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -63,13 +81,14 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), na
 templates = Jinja2Templates(directory=str(BASE_DIR / "web" / "templates"))
 
 # 라우터 임포트
-from api.routes import auth, pages, stores  # 인증, 페이지, 매장 라우터
+from api.routes import auth, pages, stores, reviews  # 인증, 페이지, 매장 라우터
 # from api.routes import reviews, dashboard, settings  # 나중에 추가
 
 # 라우터 등록 - 순서 중요! pages 라우터를 마지막에 등록
 app.include_router(auth.router)  # 인증 라우터 (태그와 prefix는 라우터 파일에서 정의)
 app.include_router(stores.router)  # 매장 라우터
 app.include_router(pages.router)  # 페이지 라우터 (루트 경로 포함)
+app.include_router(reviews.router)  # 리뷰 라우터 추가
 # app.include_router(reviews.router, prefix="/api/reviews", tags=["리뷰"])
 # app.include_router(dashboard.router, prefix="/api/dashboard", tags=["대시보드"])
 # app.include_router(settings.router, prefix="/api/settings", tags=["설정"])

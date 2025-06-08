@@ -183,7 +183,7 @@
                                placeholder="플랫폼 로그인 비밀번호">
                     </div>
                 </div>
-                <button type="button" class="btn-fetch-stores" onclick="fetchStores()">
+                <button type="button" class="btn-fetch-stores" id="fetchStoresBtn">
                     매장 정보 가져오기
                 </button>
                 <span class="loading" id="loadingSpinner" style="display: none;">
@@ -373,6 +373,12 @@
             }
         }
 
+        // 전역 스코프에 함수 등록
+        window.fetchStores = fetchStores;
+
+        // 버튼 클릭 이벤트 리스너 추가
+        document.getElementById('fetchStoresBtn').addEventListener('click', fetchStores);
+
         // 매장 선택
         function selectStore(store) {
             document.querySelectorAll('.store-item').forEach(item => item.classList.remove('selected'));
@@ -381,6 +387,9 @@
             document.getElementById('platform_code').value = store.platform_code;
             document.getElementById('store_name').value = store.store_name;
         }
+
+        // 전역 스코프에 함수 등록
+        window.selectStore = selectStore;
 
         // 폼 제출
         document.getElementById('storeRegisterForm').addEventListener('submit', async (e) => {

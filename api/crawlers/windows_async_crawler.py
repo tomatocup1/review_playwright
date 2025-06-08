@@ -1,61 +1,48 @@
 """
-베이스 크롤러 클래스
-모든 플랫폼별 크롤러가 상속받는 기본 클래스
+Windows 환경을 위한 비동기 크롤러 래퍼
+asyncio 이벤트 루프 문제를 해결하기 위한 특별한 처리
 """
-from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any
-from datetime import datetime
-import asyncio
 import sys
-from playwright.async_api import async_playwright, Page, Browser, Playwright
+import asyncio
 import logging
+from typing import Dict, List, Any, Optional
 from pathlib import Path
-import nest_asyncio
+from datetime import datetime
+from playwright.async_api import async_playwright, Page, Browser, Playwright, BrowserContext
+from abc import ABC, abstractmethod
 
-# Windows에서 asyncio 중첩 실행 허용
-nest_asyncio.apply()
-
-# Windows 전용 설정
+# Windows에서 asyncio 이벤트 루프 정책 설정
 if sys.platform == 'win32':
-    # ProactorEventLoop 대신 SelectorEventLoop 사용
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    # ProactorEventLoop는 subprocess를 지원하지만 signal handling에 문제가 있을 수 있음
+    try:
+        # 이미 설정된 정책이 있는지 확인
+        asyncio.get_event_loop_policy()
+    except:
+        # 설정되지 않은 경우에만 설정
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-# 로거 설정
 logger = logging.getLogger(__name__)
 
-class BaseCrawler(ABC):
-    """플랫폼 크롤러 베이스 클래스"""
+class WindowsAsyncBaseCrawler(ABC):
+    """Windows 전용 비동기 크롤러 베이스 클래스"""
     
     def __init__(self, headless: bool = True):
         self.headless = headless
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
+        self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.logged_in = False
-        self.platform_name = self.__class__.__name__.replace('Crawler', '').lower()
+        self.platform_name = self.__class__.__name__.replace('AsyncCrawler', '').lower()
         
         # 스크린샷 저장 경로
         self.screenshot_dir = Path(f"C:/Review_playwright/logs/screenshots/{self.platform_name}")
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
-    
-    async def __aenter__(self):
-        await self.start_browser()
-        return self
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close_browser()
-    
+        
     async def start_browser(self):
         """브라우저 시작"""
         try:
-            # Windows에서 안정적인 실행을 위해 이벤트 루프 확인
-            try:
-                loop = asyncio.get_running_loop()
-                if sys.platform == 'win32' and isinstance(loop, asyncio.ProactorEventLoop):
-                    logger.warning("ProactorEventLoop detected, switching to SelectorEventLoop")
-                    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-            except:
-                pass
+            logger.info(f"Starting {self.platform_name} browser in async mode (Windows)...")
             
             self.playwright = await async_playwright().start()
             
@@ -67,80 +54,73 @@ class BaseCrawler(ABC):
                     '--disable-dev-shm-usage',
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
-                    '--disable-gpu'
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process'
                 ]
             }
             
-            # Windows에서 추가 옵션
-            if sys.platform == 'win32':
-                launch_options['handle_sigint'] = False
-                launch_options['handle_sigterm'] = False
-                launch_options['handle_sighup'] = False
-            
+            # 브라우저 시작
             self.browser = await self.playwright.chromium.launch(**launch_options)
             
-            # 브라우저 컨텍스트 생성 (더 안정적)
-            context = await self.browser.new_context(
+            # 컨텍스트 생성
+            self.context = await self.browser.new_context(
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 viewport={'width': 1920, 'height': 1080},
                 ignore_https_errors=True
             )
             
-            self.page = await context.new_page()
+            # 페이지 생성
+            self.page = await self.context.new_page()
+            self.page.set_default_timeout(30000)
             
-            # 타임아웃 설정
-            self.page.set_default_timeout(30000)  # 30초
+            logger.info(f"{self.platform_name} browser started successfully")
             
-            logger.info(f"{self.platform_name} 브라우저 시작 완료")
         except Exception as e:
-            logger.error(f"브라우저 시작 실패: {str(e)}")
-            # 실패 시 정리
+            logger.error(f"Failed to start browser: {str(e)}")
             await self.close_browser()
             raise
-    
+            
     async def close_browser(self):
         """브라우저 종료"""
         try:
             if self.page:
-                try:
-                    await self.page.close()
-                except:
-                    pass
+                await self.page.close()
                 self.page = None
-            
+                
+            if self.context:
+                await self.context.close()
+                self.context = None
+                
             if self.browser:
-                try:
-                    await self.browser.close()
-                except:
-                    pass
+                await self.browser.close()
                 self.browser = None
-            
+                
             if self.playwright:
-                try:
-                    await self.playwright.stop()
-                except:
-                    pass
+                await self.playwright.stop()
                 self.playwright = None
+                
+            logger.info(f"{self.platform_name} browser closed")
             
-            logger.info(f"{self.platform_name} 브라우저 종료 완료")
         except Exception as e:
-            logger.error(f"브라우저 종료 중 오류: {str(e)}")
-    
+            logger.error(f"Error closing browser: {str(e)}")
+            
     async def save_screenshot(self, name: str):
         """스크린샷 저장"""
         if not self.page:
             return
-        
+            
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{name}_{timestamp}.png"
             filepath = self.screenshot_dir / filename
             
             await self.page.screenshot(path=str(filepath))
-            logger.info(f"스크린샷 저장: {filepath}")
+            logger.info(f"Screenshot saved: {filepath}")
+            
         except Exception as e:
-            logger.error(f"스크린샷 저장 실패: {str(e)}")
-    
+            logger.error(f"Failed to save screenshot: {str(e)}")
+            
     async def wait_and_click(self, selector: str, timeout: int = 5000):
         """요소 대기 후 클릭"""
         try:
@@ -148,9 +128,9 @@ class BaseCrawler(ABC):
             await self.page.click(selector)
             return True
         except Exception as e:
-            logger.error(f"클릭 실패 {selector}: {str(e)}")
+            logger.error(f"Failed to click {selector}: {str(e)}")
             return False
-    
+            
     async def wait_and_type(self, selector: str, text: str, timeout: int = 5000):
         """요소 대기 후 입력"""
         try:
@@ -158,34 +138,34 @@ class BaseCrawler(ABC):
             await self.page.fill(selector, text)
             return True
         except Exception as e:
-            logger.error(f"입력 실패 {selector}: {str(e)}")
+            logger.error(f"Failed to type in {selector}: {str(e)}")
             return False
-    
+            
     @abstractmethod
     async def login(self, username: str, password: str) -> bool:
         """로그인 메서드 (각 플랫폼별 구현 필요)"""
         pass
-    
+        
     @abstractmethod
     async def get_store_list(self) -> List[Dict[str, Any]]:
         """매장 목록 가져오기"""
         pass
-    
+        
     @abstractmethod
     async def select_store(self, platform_code: str) -> bool:
         """매장 선택"""
         pass
-    
+        
     @abstractmethod
     async def get_store_info(self) -> Dict[str, Any]:
         """현재 선택된 매장 정보 가져오기"""
         pass
-    
+        
     @abstractmethod
     async def get_reviews(self, limit: int = 50) -> List[Dict[str, Any]]:
         """리뷰 목록 가져오기"""
         pass
-    
+        
     @abstractmethod
     async def post_reply(self, review_id: str, reply_text: str) -> bool:
         """리뷰에 답글 작성"""

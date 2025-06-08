@@ -4,6 +4,7 @@ playwright-stealth==1.0.6
 
 # 비동기 처리
 asyncio==3.4.3
+nest-asyncio==1.6.0
 
 # Supabase
 supabase==2.3.0

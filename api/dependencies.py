@@ -14,6 +14,7 @@ from functools import wraps
 
 from api.schemas.auth import User, TokenData
 from config.supabase_client import get_supabase_client
+from api.services.supabase_service import SupabaseService
 
 load_dotenv()
 
@@ -120,3 +121,8 @@ async def get_admin_user(current_user: User = Depends(get_current_user)) -> User
             detail="Not enough permissions"
         )
     return current_user
+
+
+def get_supabase_service() -> SupabaseService:
+    """Supabase 서비스 의존성"""
+    return SupabaseService()

@@ -374,8 +374,20 @@ function logout() {
     window.location.href = '/';
 }
 
+// 인증 확인 함수
+function checkAuth() {
+    const accessToken = TokenManager.getAccessToken();
+    if (!accessToken) {
+        // 토큰이 없으면 로그인 페이지로 리다이렉트
+        window.location.href = '/login';
+        return false;
+    }
+    return true;
+}
+
 // Export for use in other scripts
 window.TokenManager = TokenManager;
 window.apiRequest = apiRequest;
 window.makeAuthenticatedRequest = makeAuthenticatedRequest;
 window.logout = logout;
+window.checkAuth = checkAuth;

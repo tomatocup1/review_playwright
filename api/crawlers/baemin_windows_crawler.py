@@ -7,6 +7,12 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from pathlib import Path
+import asyncio
+import sys
+
+# Windows 이벤트 루프 정책은 main.py와 windows_async_crawler.py에서 이미 설정됨
+# 여기서는 설정하지 않음
+
 from playwright.async_api import async_playwright, Page, Browser, Playwright, BrowserContext
 
 logger = logging.getLogger(__name__)
@@ -29,13 +35,25 @@ class BaeminWindowsCrawler(WindowsAsyncBaseCrawler):
         self.login_url = "https://biz-member.baemin.com/login"
         self.self_service_url = "https://self.baemin.com"
         
+        # 스크린샷 저장 경로
+        self.screenshot_dir = Path("C:/Review_playwright/logs/screenshots/baemin")
+        self.screenshot_dir.mkdir(parents=True, exist_ok=True)
         
-        
-    
+    async def save_screenshot(self, name: str):
+        """스크린샷 저장"""
+        if not self.page:
+            return
             
-    )
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{name}_{timestamp}.png"
+            filepath = self.screenshot_dir / filename
             
-    )
+            await self.page.screenshot(path=str(filepath))
+            logger.info(f"스크린샷 저장: {filepath}")
+            
+        except Exception as e:
+            logger.error(f"스크린샷 저장 실패: {str(e)}")
             
     async def login(self, username: str, password: str) -> bool:
         """배민 로그인"""
@@ -49,15 +67,15 @@ class BaeminWindowsCrawler(WindowsAsyncBaseCrawler):
             await self.save_screenshot("login_page")
             
             # 아이디 입력
-            await self.await page.fill('input[type="text"]', username)
+            await self.page.fill('input[type="text"]', username)
             logger.info("아이디 입력 완료")
             
             # 비밀번호 입력
-            await self.await page.fill('input[type="password"]', password)
+            await self.page.fill('input[type="password"]', password)
             logger.info("비밀번호 입력 완료")
             
             # 로그인 버튼 클릭
-            await self.await page.click('button[type="submit"]')
+            await self.page.click('button[type="submit"]')
             logger.info("로그인 버튼 클릭")
             
             # 로그인 처리를 위해 충분한 시간 대기
@@ -102,7 +120,7 @@ class BaeminWindowsCrawler(WindowsAsyncBaseCrawler):
             for selector in popup_close_selectors:
                 try:
                     if await self.page.is_visible(selector):
-                        await self.await page.click(selector)
+                        await self.page.click(selector)
                         logger.info(f"팝업을 닫았습니다: {selector}")
                         await self.page.wait_for_timeout(1000)
                         return
@@ -149,16 +167,18 @@ class BaeminWindowsCrawler(WindowsAsyncBaseCrawler):
                 ]
                 
                 select_element = None
-                for selector in select_selectors:
+                selector = None
+                for sel in select_selectors:
                     try:
-                        select_element = await self.page.wait_for_selector(selector, timeout=5000)
+                        select_element = await self.page.wait_for_selector(sel, timeout=5000)
                         if select_element:
+                            selector = sel
                             logger.info(f"Select 요소 발견: {selector}")
                             break
                     except:
                         continue
                 
-                if select_element:
+                if select_element and selector:
                     # select 요소의 모든 option 가져오기
                     options = await self.page.query_selector_all(f'{selector} option')
                     
@@ -256,18 +276,89 @@ class BaeminWindowsCrawler(WindowsAsyncBaseCrawler):
             logger.error(f"매장 목록 조회 중 오류: {str(e)}")
             await self.save_screenshot("store_list_error")
             return []
-
-
+    
+    async def select_store(self, platform_code: str) -> bool:
+        """매장 선택"""
+        try:
+            logger.info(f"매장 선택 시도: {platform_code}")
+            
+            # 셀프서비스 페이지에서 매장 선택
+            select_element = await self.page.query_selector('select')
+            if select_element:
+                await select_element.select_option(platform_code)
+                logger.info(f"매장 {platform_code} 선택 완료")
+                await self.page.wait_for_timeout(2000)  # 페이지 로드 대기
+                return True
+            else:
+                logger.error("매장 선택 select 요소를 찾을 수 없습니다")
+                return False
+                
+        except Exception as e:
+            logger.error(f"매장 선택 중 오류: {str(e)}")
+            return False
+            
+    async def get_store_info(self) -> Dict[str, Any]:
+        """현재 선택된 매장 정보 가져오기"""
+        try:
+            logger.info("매장 정보 조회 시작")
+            
+            # 현재 선택된 매장의 정보를 가져옴
+            store_info = {
+                'platform': 'baemin',
+                'store_name': '',
+                'business_hours': {},
+                'store_address': '',
+                'store_phone': ''
+            }
+            
+            # TODO: 실제 매장 정보 페이지에서 정보 추출 로직 구현
+            # 현재는 기본값 반환
+            
+            return store_info
+            
+        except Exception as e:
+            logger.error(f"매장 정보 조회 중 오류: {str(e)}")
+            return {}
+            
+    async def get_reviews(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """리뷰 목록 가져오기"""
+        try:
+            logger.info(f"리뷰 목록 조회 시작 (최대 {limit}개)")
+            
+            reviews = []
+            
+            # TODO: 실제 리뷰 페이지로 이동하여 리뷰 목록 추출 로직 구현
+            # 현재는 빈 리스트 반환
+            
+            logger.info(f"총 {len(reviews)}개의 리뷰 조회 완료")
+            return reviews
+            
+        except Exception as e:
+            logger.error(f"리뷰 목록 조회 중 오류: {str(e)}")
+            return []
+            
+    async def post_reply(self, review_id: str, reply_text: str) -> bool:
+        """리뷰에 답글 작성"""
+        try:
+            logger.info(f"리뷰 {review_id}에 답글 작성 시작")
+            
+            # TODO: 실제 답글 작성 로직 구현
+            # 현재는 False 반환
+            
+            logger.warning("답글 작성 기능이 아직 구현되지 않았습니다")
+            return False
+            
+        except Exception as e:
+            logger.error(f"답글 작성 중 오류: {str(e)}")
+            return False
 
 
 # 직접 실행 시 테스트 코드
 if __name__ == "__main__":
-    import asyncio
-    import sys
-    
-    # Windows 이벤트 루프 정책 설정
+    # 직접 실행할 때만 이벤트 루프 정책 설정
     if sys.platform == 'win32':
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        # ProactorEventLoop를 사용 (subprocess 지원)
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     
     # 로깅 설정
     logging.basicConfig(
@@ -282,16 +373,15 @@ if __name__ == "__main__":
             print("브라우저 시작 완료")
             
             # 직접 아이디/비밀번호 입력 (테스트용)
-            user_id = "test_id"
-            password = "test_password"
+            user_id = "hong7704002646"
+            password = "bin986200#"
             
             login_success = await crawler.login(user_id, password)
             print(f"로그인 결과: {login_success}")
             
             if login_success:
                 stores = await crawler.get_store_list()
-                print(f"
-발견된 매장 목록:")
+                print(f"\n발견된 매장 목록:")
                 for store in stores:
                     print(f"- {store['store_name']} (코드: {store['platform_code']}, 카테고리: {store.get('category', '')})")
             
@@ -300,8 +390,7 @@ if __name__ == "__main__":
             import traceback
             traceback.print_exc()
         finally:
-            input("
-브라우저를 닫으려면 Enter를 누르세요...")
+            input("\n브라우저를 닫으려면 Enter를 누르세요...")
             await crawler.close_browser()
     
     asyncio.run(test())

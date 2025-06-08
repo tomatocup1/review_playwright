@@ -8,9 +8,12 @@ import logging
 import asyncio
 from pathlib import Path
 
-# 프로젝트 경로 추가
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# 프로젝트 경로 추가 - 상대 임포트 오류 해결
+current_dir = Path(__file__).parent
+sys.path.insert(0, str(current_dir))
+sys.path.insert(0, str(current_dir.parent))
 
+# 이제 임포트
 from baemin_sync_crawler import BaeminSyncCrawler
 from coupang_crawler import CoupangCrawler
 from yogiyo_crawler import YogiyoCrawler
@@ -19,6 +22,8 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+logger = logging.getLogger(__name__)
 
 # Windows 이벤트 루프 정책 설정
 if sys.platform == 'win32':
@@ -52,6 +57,9 @@ async def run_async_crawler(platform, username, password, action, headless):
             print(json.dumps({"error": f"Unknown action: {action}"}))
             
     except Exception as e:
+        import traceback
+        logger.error(f"크롤러 실행 중 오류: {str(e)}")
+        logger.error(traceback.format_exc())
         print(json.dumps({"error": str(e)}))
     finally:
         if crawler:
@@ -68,6 +76,8 @@ def main():
     password = sys.argv[3]
     action = sys.argv[4]
     headless = sys.argv[5].lower() == 'true' if len(sys.argv) > 5 else True
+    
+    logger.info(f"서브프로세스 시작 - 플랫폼: {platform}, 액션: {action}")
     
     try:
         if platform == 'baemin':
@@ -90,7 +100,7 @@ def main():
                 
             crawler.close_browser()
             
-        elif platform in ['coupang', 'yogiyo']:
+        elif platform in ['coupang', 'yogiyo']:  # yogiyo 추가
             # 쿠팡이츠와 요기요는 비동기 크롤러 사용
             asyncio.run(run_async_crawler(platform, username, password, action, headless))
             
@@ -99,6 +109,9 @@ def main():
             return
             
     except Exception as e:
+        import traceback
+        logger.error(f"메인 함수 오류: {str(e)}")
+        logger.error(traceback.format_exc())
         print(json.dumps({"error": str(e)}))
 
 if __name__ == "__main__":

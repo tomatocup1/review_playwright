@@ -1,228 +1,460 @@
 """
-배달의민족 Windows 동기 크롤러
+배달의민족 Windows 동기식 크롤러
+비동기 문제를 피하기 위한 동기식 버전
 """
+import re
+import json
 import logging
-import time
-from typing import Dict, List, Any
-from .windows_sync_crawler import WindowsSyncBaseCrawler
+from typing import Dict, List, Any, Optional
+from datetime import datetime
+from pathlib import Path
+from playwright.sync_api import sync_playwright, Page, Browser, Playwright, BrowserContext
 
 logger = logging.getLogger(__name__)
 
-class BaeminSyncCrawler(WindowsSyncBaseCrawler):
-    """배달의민족 Windows 동기 크롤러"""
+class BaeminSyncCrawler:
+    """배달의민족 동기식 크롤러"""
     
     def __init__(self, headless: bool = True):
-        super().__init__(headless)
-        self.platform_name = 'baemin'
-        self.base_url = 'https://ceo.baemin.com'
+        self.headless = headless
+        self.playwright: Optional[Playwright] = None
+        self.browser: Optional[Browser] = None
+        self.context: Optional[BrowserContext] = None
+        self.page: Optional[Page] = None
+        self.logged_in = False
+        self.login_url = "https://biz-member.baemin.com/login"
+        self.self_service_url = "https://self.baemin.com"
         
-    def login(self, username: str, password: str) -> bool:
-        """배민 사장님 사이트 로그인"""
+        # 스크린샷 저장 경로
+        self.screenshot_dir = Path("C:/Review_playwright/logs/screenshots/baemin")
+        self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+        
+    def start_browser(self):
+        """브라우저 시작"""
         try:
-            logger.info(f"Logging in to Baemin CEO site...")
+            logger.info("배민 브라우저 시작 중...")
+            logger.info(f"Headless 모드: {self.headless}")
+            
+            # Playwright 시작
+            try:
+                self.playwright = sync_playwright().start()
+                logger.info("Playwright 인스턴스 생성 성공")
+            except Exception as e:
+                logger.error(f"Playwright 시작 실패: {str(e)}")
+                raise
+            
+            # 브라우저 실행 옵션
+            launch_options = {
+                'headless': self.headless,
+                'args': [
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',  # 추가
+                    '--disable-gpu',  # 추가
+                    '--disable-web-security',  # 추가
+                    '--disable-features=IsolateOrigins,site-per-process'  # 추가
+                ]
+            }
+            
+            # 브라우저 시작
+            try:
+                self.browser = self.playwright.chromium.launch(**launch_options)
+                logger.info("브라우저 런치 성공")
+            except Exception as e:
+                logger.error(f"브라우저 런치 실패: {str(e)}")
+                logger.error(f"브라우저 실행 파일 경로 문제일 수 있습니다.")
+                raise
+            
+            # 컨텍스트 생성
+            try:
+                self.context = self.browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    viewport={'width': 1920, 'height': 1080},
+                    ignore_https_errors=True  # 추가
+                )
+                logger.info("브라우저 컨텍스트 생성 성공")
+            except Exception as e:
+                logger.error(f"컨텍스트 생성 실패: {str(e)}")
+                raise
+            
+            # 페이지 생성
+            try:
+                self.page = self.context.new_page()
+                self.page.set_default_timeout(30000)
+                logger.info("페이지 생성 성공")
+            except Exception as e:
+                logger.error(f"페이지 생성 실패: {str(e)}")
+                raise
+            
+            logger.info("브라우저 시작 성공")
+            
+        except Exception as e:
+            logger.error(f"브라우저 시작 실패 - 전체 에러: {str(e)}")
+            logger.error(f"에러 타입: {type(e).__name__}")
+            import traceback
+            logger.error(f"스택 트레이스:\n{traceback.format_exc()}")
+            self.close_browser()
+            raise
+            
+    def close_browser(self):
+        """브라우저 종료"""
+        try:
+            if self.page:
+                self.page.close()
+            if self.context:
+                self.context.close()
+            if self.browser:
+                self.browser.close()
+            if self.playwright:
+                self.playwright.stop()
+            logger.info("브라우저 종료 완료")
+        except Exception as e:
+            logger.error(f"브라우저 종료 중 오류: {str(e)}")
+            
+    def save_screenshot(self, name: str):
+        """스크린샷 저장"""
+        if not self.page:
+            return
+            
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{name}_{timestamp}.png"
+            filepath = self.screenshot_dir / filename
+            
+            self.page.screenshot(path=str(filepath))
+            logger.info(f"스크린샷 저장: {filepath}")
+            
+        except Exception as e:
+            logger.error(f"스크린샷 저장 실패: {str(e)}")
+            
+    def login(self, username: str, password: str) -> bool:
+        """배민 로그인"""
+        try:
+            logger.info(f"배민 로그인 시작: {username}")
             
             # 로그인 페이지로 이동
-            self.page.goto(f'{self.base_url}/login')
-            
-            # 페이지 로드 대기
+            self.page.goto(self.login_url)
             self.page.wait_for_load_state('networkidle')
             
-            # 로그인 전 스크린샷
-            self.save_screenshot('baemin_login_page')
+            self.save_screenshot("login_page")
             
             # 아이디 입력
-            id_input = 'input[name="username"], input[placeholder*="아이디"], #username, #loginId'
-            if not self.wait_and_type(id_input, username):
-                logger.error("Failed to input username")
-                return False
-                
-            # 비밀번호 입력
-            pw_input = 'input[name="password"], input[type="password"], #password, #loginPw'
-            if not self.wait_and_type(pw_input, password):
-                logger.error("Failed to input password")
-                return False
-                
-            # 로그인 버튼 클릭
-            login_button = 'button[type="submit"], button:has-text("로그인"), .login-button'
-            if not self.wait_and_click(login_button):
-                logger.error("Failed to click login button")
-                return False
-                
-            # 로그인 후 페이지 로드 대기
-            time.sleep(3)
-            self.page.wait_for_load_state('networkidle')
+            self.page.fill('input[type="text"]', username)
+            logger.info("아이디 입력 완료")
             
-            # 로그인 성공 여부 확인
+            # 비밀번호 입력
+            self.page.fill('input[type="password"]', password)
+            logger.info("비밀번호 입력 완료")
+            
+            # 로그인 버튼 클릭
+            self.page.click('button[type="submit"]')
+            logger.info("로그인 버튼 클릭")
+            
+            # 로그인 처리를 위해 충분한 시간 대기
+            logger.info("로그인 처리 대기 중...")
+            self.page.wait_for_timeout(5000)  # 5초 대기
+            
+            # 현재 URL 확인
             current_url = self.page.url
-            if 'login' not in current_url:
-                logger.info("Login successful")
+            logger.info(f"로그인 후 URL: {current_url}")
+            
+            # 스크린샷 저장
+            self.save_screenshot("after_login")
+            
+            # 단순히 로그인 페이지를 벗어났는지 확인
+            if 'login' not in current_url.lower():
+                logger.info("로그인 페이지를 벗어남 - 로그인 성공")
                 self.logged_in = True
-                self.save_screenshot('baemin_after_login')
                 return True
             else:
-                logger.error("Login failed - still on login page")
-                self.save_screenshot('baemin_login_failed')
+                logger.error("여전히 로그인 페이지에 있음 - 로그인 실패")
                 return False
                 
         except Exception as e:
-            logger.error(f"Login error: {str(e)}")
-            self.save_screenshot('baemin_login_error')
+            logger.error(f"배민 로그인 중 오류: {str(e)}")
+            self.save_screenshot("login_error")
             return False
             
-    def get_store_list(self) -> List[Dict[str, Any]]:
-        """매장 목록 가져오기"""
+    def close_popup(self):
+        """팝업 닫기"""
         try:
-            if not self.logged_in:
-                logger.error("Not logged in")
-                return []
-                
-            logger.info("Getting store list...")
+            # 팝업이 나타날 때까지 잠시 대기
+            self.page.wait_for_timeout(2000)
             
-            # 매장 목록 페이지로 이동
-            self.page.goto(f'{self.base_url}/store/list')
-            self.page.wait_for_load_state('networkidle')
+            # "오늘 하루 보지 않기" 버튼 찾아서 클릭
+            popup_close_selectors = [
+                'button:has-text("오늘 하루 보지 않기")',
+                'span:has-text("오늘 하루 보지 않기")',
+                'text="오늘 하루 보지 않기"',
+                '.TextButton_b_b8ew_1j0jumh3'  # 클래스명으로도 시도
+            ]
             
-            stores = []
-            
-            # 매장 목록 추출
-            store_elements = self.page.query_selector_all('.store-item, .shop-item, [data-store-id]')
-            
-            for element in store_elements:
+            for selector in popup_close_selectors:
                 try:
-                    store_name = element.query_selector('.store-name, .shop-name').inner_text()
-                    store_id = element.get_attribute('data-store-id') or element.get_attribute('data-shop-id')
-                    
-                    if store_name and store_id:
-                        stores.append({
-                            'platform_code': store_id,
-                            'store_name': store_name.strip(),
-                            'platform': 'baemin'
-                        })
+                    if self.page.is_visible(selector):
+                        self.page.click(selector)
+                        logger.info(f"팝업을 닫았습니다: {selector}")
+                        self.page.wait_for_timeout(1000)
+                        return
                 except:
                     continue
                     
-            logger.info(f"Found {len(stores)} stores")
+            logger.info("닫을 팝업이 없거나 이미 닫혀있습니다")
+                    
+        except Exception as e:
+            logger.debug(f"팝업 처리 중 예외 발생: {str(e)}")
+            
+    def get_store_list(self) -> List[Dict[str, Any]]:
+        """매장 목록 조회"""
+        try:
+            logger.info("배민 매장 목록 조회 시작")
+            
+            # 현재 URL 확인
+            current_url = self.page.url
+            logger.info(f"현재 페이지 URL: {current_url}")
+            
+            # 셀프서비스 페이지로 이동
+            logger.info("셀프서비스 페이지로 이동")
+            self.page.goto(self.self_service_url)
+            self.page.wait_for_load_state('networkidle')
+            
+            # 페이지 로드 대기
+            self.page.wait_for_timeout(3000)
+            
+            # 팝업 닫기
+            self.close_popup()
+            
+            self.save_screenshot("self_service_page")
+            
+            stores = []
+            
+            # select 요소 찾기
+            try:
+                # 다양한 선택자로 시도
+                select_selectors = [
+                    'select.ShopSelect-module___pC1',
+                    'select.Select-module__a623',
+                    'select',  # 모든 select 요소
+                    '.ShopSelect-module__JWCr select'
+                ]
+                
+                select_element = None
+                selector = None
+                for sel in select_selectors:
+                    try:
+                        select_element = self.page.wait_for_selector(sel, timeout=5000)
+                        if select_element:
+                            selector = sel
+                            logger.info(f"Select 요소 발견: {selector}")
+                            break
+                    except:
+                        continue
+                
+                if select_element:
+                    # select 요소의 모든 option 가져오기
+                    options = self.page.query_selector_all(f'{selector} option')
+                    
+                    if options:
+                        logger.info(f"{len(options)}개의 매장 발견")
+                        
+                        for option in options:
+                            value = option.get_attribute('value')
+                            text = option.text_content()
+                            
+                            if value and text:
+                                logger.info(f"옵션 발견: {text}")
+                                
+                                # 텍스트에서 매장 정보 파싱
+                                # 예: "[음식배달] 더클램 데이 / 카페·디저트 14545991"
+                                # 정규식 패턴 수정 - 마지막 숫자 부분을 선택적으로
+                                patterns = [
+                                    r'\[(.*?)\]\s*(.+?)\s*/\s*(.+?)\s*(\d+)$',  # 끝에 숫자가 있는 경우
+                                    r'\[(.*?)\]\s*(.+?)\s*/\s*(.+?)$',  # 숫자가 없는 경우
+                                    r'(.+?)\s*/\s*(.+?)\s*(\d+)$',  # 대괄호가 없는 경우
+                                ]
+                                
+                                matched = False
+                                for pattern in patterns:
+                                    match = re.match(pattern, text.strip())
+                                    if match:
+                                        if len(match.groups()) == 4:  # 숫자 포함
+                                            store_type = match.group(1)
+                                            store_name = match.group(2).strip()
+                                            category = match.group(3).strip()
+                                            platform_code = match.group(4)
+                                        elif len(match.groups()) == 3 and match.group(3).isdigit():  # 대괄호 없고 숫자 있음
+                                            store_type = '음식배달'
+                                            store_name = match.group(1).strip()
+                                            category = match.group(2).strip()
+                                            platform_code = match.group(3)
+                                        else:  # 숫자 없음
+                                            store_type = match.group(1) if '[' in text else '음식배달'
+                                            store_name = match.group(2) if '[' in text else match.group(1).strip()
+                                            category = match.group(3) if '[' in text else match.group(2).strip()
+                                            platform_code = value
+                                        
+                                        matched = True
+                                        break
+                                
+                                if not matched:
+                                    # 패턴 매칭 실패 시 기본 파싱
+                                    parts = text.strip().split('/')
+                                    if parts:
+                                        store_name = parts[0].strip()
+                                        if '[' in store_name:
+                                            store_name = store_name.split(']')[-1].strip()
+                                        category = parts[1].strip() if len(parts) > 1 else ''
+                                    else:
+                                        store_name = text.strip()
+                                        category = ''
+                                    store_type = '음식배달'
+                                    platform_code = value
+                                
+                                store_info = {
+                                    'platform': 'baemin',
+                                    'platform_code': platform_code,
+                                    'store_name': store_name,
+                                    'store_type': store_type,
+                                    'category': category,
+                                    'status': '영업중'
+                                }
+                                
+                                stores.append(store_info)
+                                logger.info(f"매장 추가: {store_name} (코드: {platform_code}, 카테고리: {category})")
+                    else:
+                        logger.warning("option 요소를 찾을 수 없습니다")
+                else:
+                    logger.warning("select 요소를 찾을 수 없습니다")
+                    
+            except Exception as e:
+                logger.error(f"매장 목록 파싱 중 오류: {str(e)}")
+                self.save_screenshot("store_list_error")
+            
+            if not stores:
+                logger.warning("매장 목록을 찾을 수 없습니다")
+                return [{
+                    'platform': 'baemin',
+                    'platform_code': 'TEST_001',
+                    'store_name': '(테스트) 매장을 찾을 수 없습니다',
+                    'store_type': '테스트',
+                    'category': '',
+                    'status': '확인필요'
+                }]
+            
+            logger.info(f"배민 매장 총 {len(stores)}개 발견")
             return stores
             
         except Exception as e:
-            logger.error(f"Error getting store list: {str(e)}")
-            self.save_screenshot('baemin_store_list_error')
+            logger.error(f"매장 목록 조회 중 오류: {str(e)}")
+            self.save_screenshot("store_list_error")
             return []
-            
+
     def select_store(self, platform_code: str) -> bool:
         """매장 선택"""
         try:
-            logger.info(f"Selecting store: {platform_code}")
+            logger.info(f"매장 선택 시도: {platform_code}")
             
-            # 매장 선택 링크 찾기
-            store_link = f'[data-store-id="{platform_code}"], [data-shop-id="{platform_code}"]'
-            
-            if self.wait_and_click(store_link):
-                self.page.wait_for_load_state('networkidle')
-                logger.info("Store selected successfully")
+            # 셀프서비스 페이지에서 매장 선택
+            select_element = self.page.query_selector('select')
+            if select_element:
+                select_element.select_option(platform_code)
+                logger.info(f"매장 {platform_code} 선택 완료")
+                self.page.wait_for_timeout(2000)  # 페이지 로드 대기
                 return True
             else:
-                logger.error("Failed to select store")
+                logger.error("매장 선택 select 요소를 찾을 수 없습니다")
                 return False
                 
         except Exception as e:
-            logger.error(f"Error selecting store: {str(e)}")
+            logger.error(f"매장 선택 중 오류: {str(e)}")
             return False
             
     def get_store_info(self) -> Dict[str, Any]:
-        """매장 정보 가져오기"""
+        """현재 선택된 매장 정보 가져오기"""
         try:
-            logger.info("Getting store info...")
+            logger.info("매장 정보 조회 시작")
             
-            info = {
+            # 현재 선택된 매장의 정보를 가져옴
+            store_info = {
+                'platform': 'baemin',
                 'store_name': '',
+                'business_hours': {},
                 'store_address': '',
-                'store_phone': '',
-                'business_hours': {}
+                'store_phone': ''
             }
             
-            # 매장명
-            name_element = self.page.query_selector('.store-title, .shop-title, h1')
-            if name_element:
-                info['store_name'] = name_element.inner_text().strip()
-                
-            # 주소
-            addr_element = self.page.query_selector('.store-address, .shop-address')
-            if addr_element:
-                info['store_address'] = addr_element.inner_text().strip()
-                
-            # 전화번호
-            phone_element = self.page.query_selector('.store-phone, .shop-phone')
-            if phone_element:
-                info['store_phone'] = phone_element.inner_text().strip()
-                
-            logger.info(f"Store info retrieved: {info['store_name']}")
-            return info
+            # TODO: 실제 매장 정보 페이지에서 정보 추출 로직 구현
+            # 현재는 기본값 반환
+            
+            return store_info
             
         except Exception as e:
-            logger.error(f"Error getting store info: {str(e)}")
+            logger.error(f"매장 정보 조회 중 오류: {str(e)}")
             return {}
             
     def get_reviews(self, limit: int = 50) -> List[Dict[str, Any]]:
         """리뷰 목록 가져오기"""
         try:
-            logger.info(f"Getting reviews (limit: {limit})...")
-            
-            # 리뷰 페이지로 이동
-            self.page.goto(f'{self.base_url}/review/list')
-            self.page.wait_for_load_state('networkidle')
+            logger.info(f"리뷰 목록 조회 시작 (최대 {limit}개)")
             
             reviews = []
             
-            # 리뷰 목록 추출
-            review_elements = self.page.query_selector_all('.review-item')[:limit]
+            # TODO: 실제 리뷰 페이지로 이동하여 리뷰 목록 추출 로직 구현
+            # 현재는 빈 리스트 반환
             
-            for element in review_elements:
-                try:
-                    review = {
-                        'review_id': element.get_attribute('data-review-id'),
-                        'reviewer_name': element.query_selector('.reviewer-name').inner_text(),
-                        'rating': len(element.query_selector_all('.star.active')),
-                        'review_text': element.query_selector('.review-text').inner_text(),
-                        'review_date': element.query_selector('.review-date').inner_text(),
-                        'has_reply': bool(element.query_selector('.reply-text'))
-                    }
-                    reviews.append(review)
-                except:
-                    continue
-                    
-            logger.info(f"Found {len(reviews)} reviews")
+            logger.info(f"총 {len(reviews)}개의 리뷰 조회 완료")
             return reviews
             
         except Exception as e:
-            logger.error(f"Error getting reviews: {str(e)}")
-            self.save_screenshot('baemin_reviews_error')
+            logger.error(f"리뷰 목록 조회 중 오류: {str(e)}")
             return []
             
     def post_reply(self, review_id: str, reply_text: str) -> bool:
-        """답글 작성"""
+        """리뷰에 답글 작성"""
         try:
-            logger.info(f"Posting reply to review {review_id}")
+            logger.info(f"리뷰 {review_id}에 답글 작성 시작")
             
-            # 답글 버튼 클릭
-            reply_button = f'[data-review-id="{review_id}"] .reply-button'
-            if not self.wait_and_click(reply_button):
-                return False
-                
-            # 답글 입력
-            reply_input = f'[data-review-id="{review_id}"] .reply-input, textarea'
-            if not self.wait_and_type(reply_input, reply_text):
-                return False
-                
-            # 답글 등록 버튼 클릭
-            submit_button = f'[data-review-id="{review_id}"] .submit-reply'
-            if not self.wait_and_click(submit_button):
-                return False
-                
-            time.sleep(2)
-            logger.info("Reply posted successfully")
-            return True
+            # TODO: 실제 답글 작성 로직 구현
+            # 현재는 False 반환
+            
+            logger.warning("답글 작성 기능이 아직 구현되지 않았습니다")
+            return False
             
         except Exception as e:
-            logger.error(f"Error posting reply: {str(e)}")
+            logger.error(f"답글 작성 중 오류: {str(e)}")
             return False
+
+
+# 테스트 코드
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    crawler = BaeminSyncCrawler(headless=False)
+    try:
+        crawler.start_browser()
+        print("브라우저 시작 완료")
+        
+        # 직접 아이디/비밀번호 입력 (테스트용)
+        user_id = "hong7704002646"
+        password = "bin986200#"
+        
+        login_success = crawler.login(user_id, password)
+        print(f"로그인 결과: {login_success}")
+        
+        if login_success:
+            stores = crawler.get_store_list()
+            print(f"\n발견된 매장 목록:")
+            for store in stores:
+                print(f"- {store['store_name']} (코드: {store['platform_code']}, 카테고리: {store.get('category', '')})")
+        
+    except Exception as e:
+        print(f"오류 발생: {str(e)}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        input("\n브라우저를 닫으려면 Enter를 누르세요...")
+        crawler.close_browser()

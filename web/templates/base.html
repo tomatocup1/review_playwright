@@ -33,6 +33,7 @@
                     <span class="text-muted">{{ user.name }}님</span>
                     <a href="/dashboard" class="btn btn-sm">대시보드</a>
                     <a href="/stores" class="btn btn-sm">매장 관리</a>
+                    <a href="/reviews" class="btn btn-sm">리뷰 관리</a>
                     <a href="#" onclick="logout()" class="btn btn-sm">로그아웃</a>
                     {% else %}
                     <a href="/login" class="btn btn-primary btn-sm">로그인</a>
@@ -57,19 +58,21 @@
     
     <!-- 기본 스크립트 -->
     <script>
-        // JWT 토큰 관리
-        const TOKEN_KEY = 'review_auth_token';
+        // JWT 토큰 관리 - localStorage 사용으로 통일
+        const TOKEN_KEY = 'access_token';
         
         function getToken() {
-            return sessionStorage.getItem(TOKEN_KEY);
+            // localStorage에서 토큰 가져오기 (auth.js와 동일)
+            return localStorage.getItem(TOKEN_KEY);
         }
         
         function setToken(token) {
-            sessionStorage.setItem(TOKEN_KEY, token);
+            localStorage.setItem(TOKEN_KEY, token);
         }
         
         function removeToken() {
-            sessionStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem('refresh_token');
         }
         
         // API 요청 헬퍼
@@ -83,7 +86,16 @@
                 }
             };
             
-            const response = await fetch(url, { ...defaultOptions, ...options });
+            const mergedOptions = {
+                ...defaultOptions,
+                ...options,
+                headers: {
+                    ...defaultOptions.headers,
+                    ...(options.headers || {})
+                }
+            };
+            
+            const response = await fetch(url, mergedOptions);
             
             if (response.status === 401) {
                 // 인증 실패시 로그인 페이지로
@@ -120,6 +132,26 @@
                 alertDiv.remove();
             }, 5000);
         }
+        
+        // 페이지 로드시 사용자 상태 확인
+        document.addEventListener('DOMContentLoaded', function() {
+            const token = getToken();
+            const navbarMenu = document.getElementById('navbar-menu');
+            
+            if (token && navbarMenu) {
+                // 토큰이 있으면 로그인 상태로 표시
+                // 서버에서 user 정보를 전달하지 않는 경우를 위한 처리
+                if (!navbarMenu.querySelector('.text-muted')) {
+                    navbarMenu.innerHTML = `
+                        <span class="text-muted">로그인됨</span>
+                        <a href="/dashboard" class="btn btn-sm">대시보드</a>
+                        <a href="/stores" class="btn btn-sm">매장 관리</a>
+                        <a href="/reviews" class="btn btn-sm">리뷰 관리</a>
+                        <a href="#" onclick="logout()" class="btn btn-sm">로그아웃</a>
+                    `;
+                }
+            }
+        });
     </script>
     
     {% block extra_js %}{% endblock %}
