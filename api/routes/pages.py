@@ -66,7 +66,7 @@ async def store_register(request: Request):
 @router.get("/reviews", response_class=HTMLResponse)
 async def reviews_list(request: Request):
     """리뷰 목록 페이지"""
-    return templates.TemplateResponse("reviews/list.html", {
+    return templates.TemplateResponse("reviews/list_with_reply_posting.html", {
         "request": request,
         "title": "리뷰 관리"
     })

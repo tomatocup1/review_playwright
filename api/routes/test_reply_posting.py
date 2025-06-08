@@ -1,170 +1,151 @@
 """
 테스트용 답글 등록 API 엔드포인트 (인증 없음)
-실제 플랫폼 연동 테스트를 위한 임시 엔드포인트
 """
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from typing import Optional
 import logging
 
 from api.dependencies import get_supabase_service
 from api.services.supabase_service import SupabaseService
-from api.services.reply_posting_service import ReplyPostingService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/test-reply-posting",
-    tags=["테스트용 답글 등록"]
+    tags=["테스트 답글 등록"]
 )
 
 
-class TestReplyRequest(BaseModel):
-    reply_content: str
-    user_code: str
-
-
-@router.post("/{review_id}/submit")
-async def test_submit_reply_to_platform(
-    review_id: str,
-    request: TestReplyRequest,
-    supabase: SupabaseService = Depends(get_supabase_service)
-):
-    """
-    테스트용 실제 플랫폼 답글 등록 (인증 우회)
-    
-    - review_id: 리뷰 ID
-    - request.reply_content: 등록할 답글 내용
-    - request.user_code: 사용자 코드
-    """
-    try:
-        logger.info(f"테스트용 답글 등록 시작: review_id={review_id}, user_code={request.user_code}")
-        
-        # ReplyPostingService 초기화 및 실행
-        reply_service = ReplyPostingService(supabase)
-        
-        # 단일 답글 등록
-        result = await reply_service.post_single_reply(
-            review_id=review_id,
-            reply_content=request.reply_content,
-            user_code=request.user_code
-        )
-        
-        logger.info(f"테스트용 답글 등록 결과: success={result['success']}")
-        
-        if result['success']:
-            return {
-                "success": True,
-                "message": "답글이 성공적으로 등록되었습니다",
-                "review_id": review_id,
-                "reply_content": request.reply_content,
-                "platform": result.get('platform', ''),
-                "store_name": result.get('store_name', ''),
-                "processing_time": result.get('processing_time', 0),
-                "final_status": result.get('final_status', ''),
-                "action_taken": result.get('action_taken', ''),
-                "test_mode": True
-            }
-        else:
-            # 실패한 경우에도 상세 정보 제공
-            return {
-                "success": False,
-                "message": f"답글 등록 실패: {result.get('error', '알 수 없는 오류')}",
-                "review_id": review_id,
-                "error_details": result.get('error_details', {}),
-                "retry_count": result.get('retry_count', 0),
-                "can_retry": result.get('can_retry', False),
-                "platform": result.get('platform', ''),
-                "test_mode": True
-            }
-            
-    except Exception as e:
-        error_msg = f"테스트용 답글 등록 오류: {str(e)}"
-        logger.error(error_msg)
-        return {
-            "success": False,
-            "message": error_msg,
-            "review_id": review_id,
-            "test_mode": True,
-            "error": str(e)
-        }
-
-
 @router.get("/{review_id}/info")
-async def get_review_info_for_test(
+async def get_review_info(
     review_id: str,
     supabase: SupabaseService = Depends(get_supabase_service)
 ):
     """
-    테스트용 리뷰 정보 조회
+    리뷰 정보 조회 (테스트용 - 인증 불필요)
     """
     try:
-        result = await supabase.get_review_by_id(review_id)
+        # 리뷰 정보 조회 (인증 없이)
+        review = await supabase.get_review_by_id(review_id)
+        if not review:
+            raise HTTPException(status_code=404, detail="리뷰를 찾을 수 없습니다")
         
-        if not result or not result.get('data'):
-            return {
-                "found": False,
-                "message": f"리뷰를 찾을 수 없습니다: {review_id}",
-                "review_id": review_id
+        return {
+            "success": True,
+            "review": {
+                "review_id": review['review_id'],
+                "store_code": review['store_code'],
+                "platform": review['platform'],
+                "rating": review['rating'],
+                "review_content": review['review_content'],
+                "ai_response": review.get('ai_response', ''),
+                "manual_response": review.get('manual_response', ''),
+                "response_status": review['response_status'],
+                "review_date": review['review_date'],
+                "created_at": review.get('created_at', ''),
+                "updated_at": review.get('updated_at', '')
             }
-        
-        review_data = result['data']
-        return {
-            "found": True,
-            "review_id": review_id,
-            "store_code": review_data.get('store_code'),
-            "platform": review_data.get('platform'),
-            "review_content": review_data.get('review_content'),
-            "rating": review_data.get('rating'),
-            "response_status": review_data.get('response_status'),
-            "ai_response": review_data.get('ai_response'),
-            "manual_response": review_data.get('manual_response'),
-            "final_response": review_data.get('final_response')
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        return {
-            "found": False,
-            "message": f"리뷰 조회 오류: {str(e)}",
-            "review_id": review_id,
-            "error": str(e)
-        }
+        logger.error(f"리뷰 정보 조회 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/stores/{store_code}/info")
-async def get_store_info_for_test(
+async def get_store_info(
     store_code: str,
     supabase: SupabaseService = Depends(get_supabase_service)
 ):
     """
-    테스트용 매장 정보 조회
+    매장 정보 조회 (테스트용 - 인증 불필요)
     """
     try:
-        result = await supabase.get_store_by_code(store_code)
+        # 매장 정보 조회 (인증 없이)
+        store = await supabase.get_store_by_code(store_code)
+        if not store:
+            raise HTTPException(status_code=404, detail="매장을 찾을 수 없습니다")
         
-        if not result or not result.get('data'):
-            return {
-                "found": False,
-                "message": f"매장을 찾을 수 없습니다: {store_code}",
-                "store_code": store_code
+        return {
+            "success": True,
+            "store": {
+                "store_code": store['store_code'],
+                "store_name": store['store_name'],
+                "platform": store['platform'],
+                "platform_code": store['platform_code'],
+                "is_active": store.get('is_active', True),
+                "auto_reply_enabled": store.get('auto_reply_enabled', False),
+                "greeting_start": store.get('greeting_start', ''),
+                "greeting_end": store.get('greeting_end', ''),
+                "created_at": store.get('created_at', ''),
+                "updated_at": store.get('updated_at', '')
             }
-        
-        store_data = result['data']
-        return {
-            "found": True,
-            "store_code": store_code,
-            "store_name": store_data.get('store_name'),
-            "platform": store_data.get('platform'),
-            "platform_id": store_data.get('platform_id'),
-            "platform_code": store_data.get('platform_code'),
-            "is_active": store_data.get('is_active'),
-            "owner_user_code": store_data.get('owner_user_code'),
-            "has_password": bool(store_data.get('platform_pw'))  # 비밀번호 존재 여부만
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"매장 정보 조회 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{review_id}/submit")
+async def test_submit_reply(
+    review_id: str,
+    supabase: SupabaseService = Depends(get_supabase_service)
+):
+    """
+    테스트용 답글 등록 (실제 플랫폼에는 등록하지 않음, 인증 불필요)
+    """
+    try:
+        # 리뷰 정보 조회
+        review = await supabase.get_review_by_id(review_id)
+        if not review:
+            raise HTTPException(status_code=404, detail="리뷰를 찾을 수 없습니다")
+        
+        # 답글 내용 확인
+        reply_content = review.get('ai_response') or review.get('manual_response')
+        if not reply_content:
+            raise HTTPException(status_code=400, detail="등록할 답글 내용이 없습니다")
+        
+        # 테스트용 - 상태만 업데이트 (실제 플랫폼에는 등록하지 않음)
+        await supabase.update_review_status(
+            review_id=review_id,
+            status='posted',
+            final_response=reply_content,
+            response_by='test_user'
+        )
+        
         return {
-            "found": False,
-            "message": f"매장 조회 오류: {str(e)}",
-            "store_code": store_code,
-            "error": str(e)
+            "success": True,
+            "message": "테스트 답글 등록 완료 (실제 플랫폼에는 등록되지 않음)",
+            "review_id": review_id,
+            "reply_content": reply_content,
+            "platform": review['platform'],
+            "store_code": review['store_code'],
+            "test_mode": True
         }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"테스트 답글 등록 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/test")
+async def test_endpoint():
+    """
+    간단한 테스트 엔드포인트
+    """
+    return {
+        "success": True,
+        "message": "테스트 답글 등록 API가 정상 작동 중입니다",
+        "endpoints": [
+            "GET /{review_id}/info - 리뷰 정보 조회",
+            "GET /stores/{store_code}/info - 매장 정보 조회", 
+            "POST /{review_id}/submit - 테스트 답글 등록"
+        ]
+    }
