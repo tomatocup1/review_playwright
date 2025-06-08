@@ -282,3 +282,146 @@ class SupabaseService:
         except Exception as e:
             logger.error(f"리뷰 상태 업데이트 오류: {e}")
             return False
+
+    # =============================================
+    # 새로 추가되는 메서드들 (매장 정책 및 답글 생성 이력)
+    # =============================================
+
+    async def get_store_reply_rules(self, store_code: str) -> Dict[str, Any]:
+        """매장별 답글 정책 조회"""
+        try:
+            response = await self._execute_query(
+                self.client.table('platform_reply_rules')
+                .select('*')
+                .eq('store_code', store_code)
+                .eq('is_active', True)
+            )
+            
+            if response.data:
+                rules = response.data[0]
+                
+                # SQL 스키마의 실제 필드명에 맞춰 반환
+                return {
+                    'store_code': rules.get('store_code', store_code),
+                    'store_name': rules.get('store_name', ''),
+                    'platform': rules.get('platform', ''),
+                    'platform_code': rules.get('platform_code', ''),
+                    
+                    # 답글 정책 설정
+                    'greeting_start': rules.get('greeting_start', '안녕하세요'),
+                    'greeting_end': rules.get('greeting_end', '감사합니다'),
+                    'role': rules.get('role', ''),
+                    'tone': rules.get('tone', ''),
+                    'prohibited_words': rules.get('prohibited_words', []),
+                    'max_length': rules.get('max_length', 300),
+                    
+                    # 별점별 자동 답글 활성화 설정
+                    'rating_5_reply': rules.get('rating_5_reply', True),
+                    'rating_4_reply': rules.get('rating_4_reply', True),
+                    'rating_3_reply': rules.get('rating_3_reply', True),
+                    'rating_2_reply': rules.get('rating_2_reply', True),
+                    'rating_1_reply': rules.get('rating_1_reply', True),
+                    
+                    # 운영 설정
+                    'auto_reply_enabled': rules.get('auto_reply_enabled', True),
+                    'auto_reply_hours': rules.get('auto_reply_hours', '10:00-20:00'),
+                    'reply_delay_minutes': rules.get('reply_delay_minutes', 30),
+                    'weekend_enabled': rules.get('weekend_enabled', True),
+                    'holiday_enabled': rules.get('holiday_enabled', False),
+                    
+                    # 품질 관리
+                    'quality_check_enabled': rules.get('quality_check_enabled', True),
+                    'manual_review_threshold': rules.get('manual_review_threshold', 0.3),
+                    'learning_mode': rules.get('learning_mode', False),
+                    
+                    # 기타 정보
+                    'owner_user_code': rules.get('owner_user_code', ''),
+                    'store_type': rules.get('store_type', 'delivery_only'),
+                    'store_address': rules.get('store_address', ''),
+                    'store_phone': rules.get('store_phone', ''),
+                    'business_hours': rules.get('business_hours', {}),
+                    'avg_rating': rules.get('avg_rating', 0.0),
+                    'total_reviews_processed': rules.get('total_reviews_processed', 0)
+                }
+            else:
+                # 매장 정보가 없는 경우 기본값 반환
+                logger.warning(f"매장 정책을 찾을 수 없습니다: {store_code}")
+                return self._get_default_reply_rules(store_code)
+                
+        except Exception as e:
+            logger.error(f"매장 정책 조회 오류: {e}")
+            return self._get_default_reply_rules(store_code)
+    
+    def _get_default_reply_rules(self, store_code: str) -> Dict[str, Any]:
+        """기본 답글 정책 반환"""
+        return {
+            'store_code': store_code,
+            'store_name': '매장',
+            'platform': '',
+            'platform_code': '',
+            'greeting_start': '안녕하세요',
+            'greeting_end': '감사합니다',
+            'role': '친절한 사장님',
+            'tone': '친근함',
+            'prohibited_words': [],
+            'max_length': 300,
+            'rating_5_reply': True,
+            'rating_4_reply': True,
+            'rating_3_reply': True,
+            'rating_2_reply': True,
+            'rating_1_reply': True,
+            'auto_reply_enabled': True,
+            'auto_reply_hours': '10:00-20:00',
+            'reply_delay_minutes': 30,
+            'weekend_enabled': True,
+            'holiday_enabled': False,
+            'quality_check_enabled': True,
+            'manual_review_threshold': 0.3,
+            'learning_mode': False,
+            'owner_user_code': '',
+            'store_type': 'delivery_only',
+            'store_address': '',
+            'store_phone': '',
+            'business_hours': {},
+            'avg_rating': 0.0,
+            'total_reviews_processed': 0
+        }
+
+    async def save_reply_generation_history(
+        self,
+        review_id: str,
+        user_code: str = None,
+        generation_type: str = 'ai_initial',
+        prompt_used: str = '',
+        model_version: str = 'gpt-4o-mini',
+        generated_content: str = '',
+        quality_score: float = 0.0,
+        processing_time_ms: int = 0,
+        token_usage: int = 0,
+        is_selected: bool = False
+    ) -> bool:
+        """답글 생성 이력 저장"""
+        try:
+            data = {
+                'review_id': review_id,
+                'user_code': user_code,
+                'generation_type': generation_type,
+                'prompt_used': prompt_used,
+                'model_version': model_version,
+                'generated_content': generated_content,
+                'quality_score': quality_score,
+                'processing_time_ms': processing_time_ms,
+                'token_usage': token_usage,
+                'is_selected': is_selected,
+                'created_at': datetime.now().isoformat()
+            }
+            
+            response = await self._execute_query(
+                self.client.table('reply_generation_history').insert(data)
+            )
+            
+            return bool(response.data)
+            
+        except Exception as e:
+            logger.error(f"답글 생성 이력 저장 오류: {e}")
+            return False

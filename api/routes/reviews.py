@@ -255,3 +255,311 @@ async def collect_all_stores_reviews(
     except Exception as e:
         logger.error(f"전체 리뷰 수집 오류: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# =============================================
+# AI 답글 생성 관련 엔드포인트 추가
+# =============================================
+
+from api.services.ai_service import AIService
+
+@router.post("/{review_id}/generate-reply")
+async def generate_reply(
+    review_id: str,
+    current_user: User = Depends(get_current_user),
+    supabase: SupabaseService = Depends(get_supabase_service)
+):
+    """
+    AI 답글 생성
+    
+    - review_id: 리뷰 ID
+    """
+    try:
+        # 리뷰 정보 조회
+        review = await supabase.get_review_by_id(review_id)
+        if not review:
+            raise HTTPException(status_code=404, detail="리뷰를 찾을 수 없습니다")
+        
+        # 권한 확인
+        has_permission = await supabase.check_user_permission(
+            current_user.user_code,
+            review['store_code'],
+            'reply'
+        )
+        
+        if not has_permission:
+            raise HTTPException(status_code=403, detail="답글 작성 권한이 없습니다")
+        
+        # 이미 답글이 있는지 확인
+        if review['response_status'] == 'posted':
+            raise HTTPException(status_code=400, detail="이미 답글이 등록된 리뷰입니다")
+        
+        # 매장 답글 정책 조회
+        store_rules = await supabase.get_store_reply_rules(review['store_code'])
+        
+        # AI 서비스로 답글 생성
+        ai_service = AIService()
+        result = await ai_service.generate_reply(review, store_rules)
+        
+        if result['success']:
+            # 생성 이력 저장
+            await supabase.save_reply_generation_history(
+                review_id=review_id,
+                user_code=current_user.user_code,
+                generation_type='ai_initial',
+                prompt_used=result.get('prompt_used', ''),
+                model_version=result.get('model_used', 'gpt-4o-mini'),
+                generated_content=result['reply'],
+                quality_score=result['quality_score'],
+                processing_time_ms=result['processing_time_ms'],
+                token_usage=result['token_usage'],
+                is_selected=False
+            )
+            
+            # 리뷰에 AI 답글 저장 (아직 등록하지는 않음)
+            await supabase.update_review_status(
+                review_id=review_id,
+                status='generated',
+                reply_content=result['reply'],
+                reply_type='ai_auto',
+                reply_by='AI'
+            )
+            
+            return {
+                "success": True,
+                "message": "AI 답글이 성공적으로 생성되었습니다",
+                "review_id": review_id,
+                "generated_reply": result['reply'],
+                "quality_score": result['quality_score'],
+                "is_valid": result['is_valid'],
+                "processing_time_ms": result['processing_time_ms'],
+                "token_usage": result['token_usage'],
+                "store_name": store_rules.get('store_name', ''),
+                "platform": store_rules.get('platform', '')
+            }
+        else:
+            # 실패한 경우도 이력 저장
+            await supabase.save_reply_generation_history(
+                review_id=review_id,
+                user_code=current_user.user_code,
+                generation_type='ai_initial',
+                prompt_used='',
+                model_version='gpt-4o-mini',
+                generated_content='',
+                quality_score=0.0,
+                processing_time_ms=result['processing_time_ms'],
+                token_usage=0,
+                is_selected=False
+            )
+            
+            raise HTTPException(
+                status_code=500, 
+                detail=f"답글 생성 실패: {result.get('error', '알 수 없는 오류')}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"답글 생성 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{review_id}/regenerate-reply")
+async def regenerate_reply(
+    review_id: str,
+    current_user: User = Depends(get_current_user),
+    supabase: SupabaseService = Depends(get_supabase_service)
+):
+    """
+    AI 답글 재생성
+    
+    - review_id: 리뷰 ID
+    """
+    try:
+        # 리뷰 정보 조회
+        review = await supabase.get_review_by_id(review_id)
+        if not review:
+            raise HTTPException(status_code=404, detail="리뷰를 찾을 수 없습니다")
+        
+        # 권한 확인
+        has_permission = await supabase.check_user_permission(
+            current_user.user_code,
+            review['store_code'],
+            'reply'
+        )
+        
+        if not has_permission:
+            raise HTTPException(status_code=403, detail="답글 작성 권한이 없습니다")
+        
+        # 매장 답글 정책 조회
+        store_rules = await supabase.get_store_reply_rules(review['store_code'])
+        
+        # 이전 시도 횟수 확인 (간단히 1로 설정)
+        previous_attempts = 1
+        
+        # AI 서비스로 답글 재생성
+        ai_service = AIService()
+        result = await ai_service.regenerate_reply(review, store_rules, previous_attempts)
+        
+        if result['success']:
+            # 생성 이력 저장
+            await supabase.save_reply_generation_history(
+                review_id=review_id,
+                user_code=current_user.user_code,
+                generation_type='ai_retry',
+                prompt_used=result.get('prompt_used', ''),
+                model_version=result.get('model_used', 'gpt-4o-mini'),
+                generated_content=result['reply'],
+                quality_score=result['quality_score'],
+                processing_time_ms=result['processing_time_ms'],
+                token_usage=result['token_usage'],
+                is_selected=False
+            )
+            
+            # 리뷰에 새로운 AI 답글 저장
+            await supabase.update_review_status(
+                review_id=review_id,
+                status='generated',
+                reply_content=result['reply'],
+                reply_type='ai_retry',
+                reply_by='AI'
+            )
+            
+            return {
+                "success": True,
+                "message": "AI 답글이 재생성되었습니다",
+                "review_id": review_id,
+                "generated_reply": result['reply'],
+                "quality_score": result['quality_score'],
+                "is_valid": result['is_valid'],
+                "processing_time_ms": result['processing_time_ms'],
+                "token_usage": result['token_usage'],
+                "attempt_number": result.get('attempt_number', 1)
+            }
+        else:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"답글 재생성 실패: {result.get('error', '알 수 없는 오류')}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"답글 재생성 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{review_id}/generation-history")
+async def get_generation_history(
+    review_id: str,
+    current_user: User = Depends(get_current_user),
+    supabase: SupabaseService = Depends(get_supabase_service)
+):
+    """
+    답글 생성 이력 조회
+    
+    - review_id: 리뷰 ID
+    """
+    try:
+        # 리뷰 정보 조회
+        review = await supabase.get_review_by_id(review_id)
+        if not review:
+            raise HTTPException(status_code=404, detail="리뷰를 찾을 수 없습니다")
+        
+        # 권한 확인
+        has_permission = await supabase.check_user_permission(
+            current_user.user_code,
+            review['store_code'],
+            'view'
+        )
+        
+        if not has_permission:
+            raise HTTPException(status_code=403, detail="해당 매장에 대한 권한이 없습니다")
+        
+        # 생성 이력 조회
+        response = await supabase._execute_query(
+            supabase.client.table('reply_generation_history')
+            .select('*')
+            .eq('review_id', review_id)
+            .order('created_at', desc=True)
+        )
+        
+        history = response.data or []
+        
+        return {
+            "review_id": review_id,
+            "history": history,
+            "total_attempts": len(history)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"생성 이력 조회 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{review_id}/select-reply")
+async def select_reply(
+    review_id: str,
+    selected_reply: dict,  # {"reply_content": "선택된 답글", "generation_id": 123}
+    current_user: User = Depends(get_current_user),
+    supabase: SupabaseService = Depends(get_supabase_service)
+):
+    """
+    생성된 답글 중 하나를 선택
+    
+    - review_id: 리뷰 ID
+    - selected_reply: 선택된 답글 정보
+    """
+    try:
+        # 리뷰 정보 조회
+        review = await supabase.get_review_by_id(review_id)
+        if not review:
+            raise HTTPException(status_code=404, detail="리뷰를 찾을 수 없습니다")
+        
+        # 권한 확인
+        has_permission = await supabase.check_user_permission(
+            current_user.user_code,
+            review['store_code'],
+            'reply'
+        )
+        
+        if not has_permission:
+            raise HTTPException(status_code=403, detail="답글 작성 권한이 없습니다")
+        
+        reply_content = selected_reply.get('reply_content', '')
+        generation_id = selected_reply.get('generation_id')
+        
+        if not reply_content:
+            raise HTTPException(status_code=400, detail="답글 내용이 필요합니다")
+        
+        # 선택된 답글로 업데이트
+        await supabase.update_review_status(
+            review_id=review_id,
+            status='ready_to_post',  # 등록 준비 완료
+            reply_content=reply_content,
+            reply_type='ai_manual',  # 사용자가 선택한 AI 답글
+            reply_by=current_user.user_code
+        )
+        
+        # 생성 이력에서 선택된 것으로 표시
+        if generation_id:
+            await supabase._execute_query(
+                supabase.client.table('reply_generation_history')
+                .update({'is_selected': True})
+                .eq('id', generation_id)
+            )
+        
+        return {
+            "success": True,
+            "message": "답글이 선택되었습니다. 이제 등록할 수 있습니다.",
+            "review_id": review_id,
+            "selected_reply": reply_content,
+            "status": "ready_to_post"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"답글 선택 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
