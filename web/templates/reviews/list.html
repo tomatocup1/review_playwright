@@ -3,6 +3,7 @@
 {% block title %}리뷰 관리 - {{ super() }}{% endblock %}
 
 {% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', path='css/reviews.css') }}">
 <style>
     /* 리뷰 페이지 전용 스타일 */
     .stats-card {
@@ -157,28 +158,6 @@
         margin-top: 0.5rem;
     }
     
-    .quality-score {
-        padding: 0.25rem 0.5rem;
-        border-radius: 12px;
-        font-size: 0.75rem;
-        font-weight: 600;
-    }
-    
-    .quality-high {
-        background: #d4edda;
-        color: #155724;
-    }
-    
-    .quality-medium {
-        background: #fff3cd;
-        color: #856404;
-    }
-    
-    .quality-low {
-        background: #f8d7da;
-        color: #721c24;
-    }
-    
     .loading {
         display: inline-block;
         width: 16px;
@@ -241,7 +220,7 @@
         <!-- 페이지 헤더 -->
         <div class="mb-4">
             <h1 class="mb-2">🤖 AI 리뷰 관리</h1>
-            <p class="text-muted">고객 리뷰를 확인하고 AI 답글을 생성하세요</p>
+            <p class="text-muted">고객 리뷰를 확인하고 AI 답글을 생성/등록하세요</p>
             <button onclick="toggleDebug()" class="btn btn-sm btn-secondary">디버그 토글</button>
         </div>
         
@@ -321,6 +300,23 @@
             </div>
         </div>
         
+        <!-- 일괄 처리 섹션 -->
+        <div id="batchActionsSection" class="batch-actions" style="display: none;">
+            <h6><i class="bi bi-lightning"></i> 일괄 답글 등록</h6>
+            <div class="d-flex gap-2 flex-wrap">
+                <button id="batchPostAll" class="btn btn-primary btn-sm" data-store-code="">
+                    <i class="bi bi-send-fill"></i> 선택된 매장의 모든 답글 등록
+                </button>
+                <button id="batchPostGenerated" class="btn btn-info btn-sm" data-store-code="">
+                    <i class="bi bi-robot"></i> AI 생성된 답글만 등록
+                </button>
+                <button id="batchPostReady" class="btn btn-success btn-sm" data-store-code="">
+                    <i class="bi bi-check-circle"></i> 등록 준비된 답글만 등록
+                </button>
+            </div>
+            <small class="text-muted">※ 일괄 등록은 백그라운드에서 처리되며, 완료 후 알림으로 결과를 확인할 수 있습니다.</small>
+        </div>
+        
         <!-- 리뷰 목록 -->
         <div id="reviewsList">
             <div class="text-center text-muted py-5">
@@ -337,9 +333,76 @@
         </nav>
     </div>
 </div>
+
+<!-- 답글 등록 확인 모달 -->
+<div class="modal fade" id="postReplyModal" tabindex="-1" aria-labelledby="postReplyModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="postReplyModalLabel">📤 답글 등록 확인</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>주의:</strong> 답글을 등록하면 실제 플랫폼(배민/요기요/쿠팡이츠)에 게시됩니다.
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>📝 원본 리뷰</h6>
+                        <div class="border rounded p-3 bg-light" style="max-height: 200px; overflow-y: auto;">
+                            <div id="modalReviewContent">리뷰 내용을 불러오는 중...</div>
+                            <div class="mt-2">
+                                <small class="text-muted">
+                                    <span id="modalReviewAuthor"></span> | 
+                                    <span id="modalReviewRating"></span> | 
+                                    <span id="modalReviewDate"></span>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>💬 등록할 답글</h6>
+                        <div class="border rounded p-3" style="max-height: 200px; overflow-y: auto; background-color: #f0f8ff;">
+                            <div id="modalReplyContent">답글 내용을 불러오는 중...</div>
+                            <div class="mt-2">
+                                <small class="text-muted">
+                                    <span id="modalReplyType"></span> | 
+                                    <span id="modalReplyLength"></span>자
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-3">
+                    <h6>📋 매장 정보</h6>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <small><strong>매장명:</strong> <span id="modalStoreName"></span></small>
+                        </div>
+                        <div class="col-md-6">
+                            <small><strong>플랫폼:</strong> <span id="modalPlatform"></span></small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle"></i> 취소
+                </button>
+                <button type="button" class="btn btn-success" id="confirmPostReplyBtn">
+                    <i class="bi bi-send"></i> 답글 등록
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', path='js/reviews.js') }}"></script>
 <script>
 console.log('[Reviews] 페이지 스크립트 로드됨');
 
@@ -477,9 +540,11 @@ async function onStoreChange() {
     
     if (currentStoreCode) {
         document.getElementById('statsSection').style.display = 'flex';
+        document.getElementById('batchActionsSection').style.display = 'block';
         await Promise.all([loadStats(), loadReviews()]);
     } else {
         document.getElementById('statsSection').style.display = 'none';
+        document.getElementById('batchActionsSection').style.display = 'none';
         document.getElementById('reviewsList').innerHTML = 
             '<div class="text-center text-muted py-5">' +
                 '<i class="bi bi-chat-square-text" style="font-size: 3rem;"></i>' +
@@ -525,7 +590,7 @@ async function loadReviews() {
     const rating = document.getElementById('ratingFilter').value;
     
     // 로딩 표시
-    document.getElementById('reviewsList').innerHTML = '<div class="text-center py-5"><div class="spinner"></div><p>리뷰를 불러오는 중...</p></div>';
+    document.getElementById('reviewsList').innerHTML = '<div class="text-center py-5"><div class="spinner-border"></div><p>리뷰를 불러오는 중...</p></div>';
     
     try {
         const params = new URLSearchParams({
@@ -568,34 +633,74 @@ async function loadReviews() {
     }
 }
 
-// 리뷰 목록 표시 (AI 기능 포함)
+// 리뷰 목록 표시 (답글 등록 기능 포함)
 function displayReviews(reviews) {
     const reviewsHtml = reviews.map(review => {
-        const aiControls = (review.response_status === 'pending' || review.response_status === 'generated') ? 
-            `<div class="ai-controls">
-                <button class="btn-ai" onclick="generateAIReply('${review.review_id}')">
-                    🤖 AI 답글 생성
-                </button>
-                ${review.response_status === 'generated' ? 
-                    `<button class="btn-regenerate" onclick="regenerateAIReply('${review.review_id}')">
+        // AI 컨트롤 버튼들
+        let aiControls = '';
+        if (review.response_status === 'pending') {
+            aiControls = `
+                <div class="ai-controls">
+                    <button class="btn-ai" onclick="generateAIReply('${review.review_id}')">
+                        🤖 AI 답글 생성
+                    </button>
+                </div>`;
+        } else if (review.response_status === 'generated') {
+            aiControls = `
+                <div class="ai-controls">
+                    <button class="btn-regenerate" onclick="regenerateAIReply('${review.review_id}')">
                         🔄 재생성
-                    </button>` : ''
-                }
-            </div>` : '';
+                    </button>
+                    <button class="post-reply-btn" 
+                            data-review-id="${review.review_id}"
+                            data-reply-content="${escapeHtml(review.final_response || review.ai_response || '')}"
+                            data-store-name="${escapeHtml(currentStoreCode)}"
+                            data-platform="${review.platform || ''}">
+                        📤 답글 등록
+                    </button>
+                </div>`;
+        } else if (review.response_status === 'ready_to_post') {
+            aiControls = `
+                <div class="ai-controls">
+                    <button class="post-reply-btn" 
+                            data-review-id="${review.review_id}"
+                            data-reply-content="${escapeHtml(review.final_response || '')}"
+                            data-store-name="${escapeHtml(currentStoreCode)}"
+                            data-platform="${review.platform || ''}">
+                        📤 답글 등록
+                    </button>
+                </div>`;
+        } else if (review.response_status === 'posted') {
+            aiControls = `
+                <div class="ai-controls">
+                    <span class="badge bg-success">
+                        <i class="bi bi-check-circle"></i> 등록완료
+                    </span>
+                </div>`;
+        } else if (review.response_status === 'failed') {
+            aiControls = `
+                <div class="ai-controls">
+                    <button class="retry-reply-btn btn btn-warning btn-sm" 
+                            data-review-id="${review.review_id}">
+                        <i class="bi bi-arrow-clockwise"></i> 재시도
+                    </button>
+                </div>`;
+        }
 
-        const replySection = review.final_response ? 
+        // 답글 섹션
+        const replySection = review.final_response || review.ai_response ? 
             `<div class="ai-reply-section">
                 <small class="text-muted">답글:</small>
-                <p class="mb-1">${escapeHtml(review.final_response)}</p>
+                <p class="mb-1">${escapeHtml(review.final_response || review.ai_response)}</p>
                 ${(review.response_method === 'ai_auto' || review.response_method === 'ai_retry') ? 
                     `<div class="ai-info">
                         <span>🤖 AI 생성 답글</span>
-                        <span class="text-muted">${formatDate(review.response_at)}</span>
+                        <span class="text-muted">${formatDate(review.response_at || review.created_at)}</span>
                     </div>` : ''
                 }
             </div>` : '';
 
-        return `<div class="review-card">
+        return `<div class="review-card" data-review-id="${review.review_id}">
             <div class="d-flex justify-content-between align-items-start mb-2">
                 <div>
                     <span class="platform-badge platform-${review.platform || 'unknown'}">${review.platform || 'N/A'}</span>
@@ -608,13 +713,138 @@ function displayReviews(reviews) {
                 <span class="rating-stars ml-2">${'★'.repeat(review.rating || 0)}${'☆'.repeat(5-(review.rating || 0))}</span>
             </div>
             ${review.ordered_menu ? `<p class="text-muted small mb-2">주문: ${escapeHtml(review.ordered_menu)}</p>` : ''}
-            <p class="mb-3">${escapeHtml(review.review_content || '')}</p>
+            <p class="mb-3 review-text">${escapeHtml(review.review_content || '')}</p>
             ${aiControls}
             ${replySection}
         </div>`;
     }).join('');
     
     document.getElementById('reviewsList').innerHTML = reviewsHtml;
+    
+    // 답글 등록 버튼 이벤트 리스너 추가
+    setupPostReplyButtons();
+}
+
+// 답글 등록 버튼 이벤트 설정
+function setupPostReplyButtons() {
+    document.querySelectorAll('.post-reply-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const reviewId = this.dataset.reviewId;
+            const replyContent = this.dataset.replyContent;
+            const storeName = this.dataset.storeName;
+            const platform = this.dataset.platform;
+            
+            // 모달에 정보 표시
+            showPostReplyModal(reviewId, replyContent, storeName, platform);
+        });
+    });
+    
+    // 재시도 버튼 이벤트
+    document.querySelectorAll('.retry-reply-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            handleRetryReply(this.dataset.reviewId);
+        });
+    });
+}
+
+// 답글 등록 모달 표시
+async function showPostReplyModal(reviewId, replyContent, storeName, platform) {
+    try {
+        // 리뷰 상세 정보 가져오기
+        const reviewInfo = await apiRequest(`/test-reply-posting/${reviewId}/info`);
+        
+        // 모달 내용 업데이트
+        document.getElementById('modalReviewContent').innerHTML = escapeHtml(reviewInfo.review_content || '');
+        document.getElementById('modalReviewAuthor').textContent = reviewInfo.review_name || '익명';
+        document.getElementById('modalReviewRating').textContent = '★'.repeat(reviewInfo.rating || 0) + '☆'.repeat(5-(reviewInfo.rating || 0));
+        document.getElementById('modalReviewDate').textContent = formatDate(reviewInfo.review_date);
+        
+        document.getElementById('modalReplyContent').innerHTML = escapeHtml(replyContent);
+        document.getElementById('modalReplyType').textContent = getReplyTypeText(reviewInfo.response_method || 'ai_auto');
+        document.getElementById('modalReplyLength').textContent = (replyContent || '').length;
+        
+        document.getElementById('modalStoreName').textContent = storeName;
+        document.getElementById('modalPlatform').textContent = getPlatformText(platform);
+        
+        // 모달 표시
+        const modal = new bootstrap.Modal(document.getElementById('postReplyModal'));
+        modal.show();
+        
+        // 확인 버튼에 데이터 저장
+        const confirmBtn = document.getElementById('confirmPostReplyBtn');
+        confirmBtn.dataset.reviewId = reviewId;
+        confirmBtn.dataset.replyContent = replyContent;
+        
+    } catch (error) {
+        console.error('리뷰 정보 로드 실패:', error);
+        showAlert('리뷰 정보를 불러오는데 실패했습니다: ' + error.message, 'danger');
+    }
+}
+
+// 답글 등록 확인 처리
+document.addEventListener('click', function(e) {
+    if (e.target && e.target.id === 'confirmPostReplyBtn') {
+        handleConfirmPostReply(e.target);
+    }
+});
+
+async function handleConfirmPostReply(button) {
+    const reviewId = button.dataset.reviewId;
+    const replyContent = button.dataset.replyContent;
+    
+    if (!reviewId || !replyContent) {
+        showAlert('오류: 등록할 답글 정보가 없습니다.', 'danger');
+        return;
+    }
+    
+    const originalText = button.innerHTML;
+    
+    try {
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 등록 중...';
+        
+        addDebugInfo(`답글 등록 시작: ${reviewId}`);
+        
+        const response = await fetch(`/api/reply-posting/${reviewId}/submit`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${getToken()}`
+            },
+            body: JSON.stringify({
+                reply_content: replyContent,
+                auto_submit: true
+            })
+        });
+        
+        const result = await response.json();
+        addDebugInfo(`답글 등록 응답: ${JSON.stringify(result)}`);
+        
+        if (response.ok && result.success) {
+            showAlert('답글이 성공적으로 등록되었습니다! 🎉', 'success');
+            
+            // 모달 닫기
+            const modal = bootstrap.Modal.getInstance(document.getElementById('postReplyModal'));
+            modal.hide();
+            
+            // 리뷰 목록 새로고침
+            setTimeout(() => {
+                loadReviews();
+                loadStats();
+            }, 1500);
+            
+        } else {
+            throw new Error(result.detail || result.message || '답글 등록에 실패했습니다.');
+        }
+        
+    } catch (error) {
+        console.error('답글 등록 오류:', error);
+        addDebugInfo(`답글 등록 실패: ${error.message}`);
+        showAlert(`답글 등록 실패: ${error.message}`, 'danger');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = originalText;
+    }
 }
 
 // AI 답글 생성
@@ -705,6 +935,86 @@ async function regenerateAIReply(reviewId) {
     }
 }
 
+// 일괄 등록 버튼 이벤트 (기존 코드에서 추가)
+document.addEventListener('click', function(e) {
+    if (e.target && e.target.id === 'batchPostAll') {
+        handleBatchPost('all', '모든 답글');
+    } else if (e.target && e.target.id === 'batchPostGenerated') {
+        handleBatchPost('generated', 'AI 생성된 답글');
+    } else if (e.target && e.target.id === 'batchPostReady') {
+        handleBatchPost('ready_to_post', '등록 준비된 답글');
+    }
+});
+
+async function handleBatchPost(type, description) {
+    if (!currentStoreCode) {
+        showAlert('매장을 먼저 선택해주세요.', 'warning');
+        return;
+    }
+    
+    if (!confirm(`이 매장의 ${description}을(를) 모두 등록하시겠습니까?\n\n※ 실제 플랫폼에 답글이 게시됩니다.`)) {
+        return;
+    }
+    
+    const button = event.target;
+    const originalText = button.innerHTML;
+    
+    try {
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 일괄 등록 중...';
+        
+        addDebugInfo(`일괄 등록 시작: ${type} - ${currentStoreCode}`);
+        
+        const filters = {};
+        if (type === 'generated') {
+            filters.status = ['generated'];
+        } else if (type === 'ready_to_post') {
+            filters.status = ['ready_to_post'];
+        } else {
+            filters.status = ['generated', 'ready_to_post'];
+        }
+        
+        const response = await fetch(`/api/reply-posting/batch/${currentStoreCode}/submit`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${getToken()}`
+            },
+            body: JSON.stringify({
+                filters: filters,
+                auto_submit: true
+            })
+        });
+        
+        const result = await response.json();
+        addDebugInfo(`일괄 등록 응답: ${JSON.stringify(result)}`);
+        
+        if (response.ok && result.success) {
+            const message = `${description} ${result.posted_count}개가 성공적으로 등록되었습니다! 🎉
+            ${result.failed_count > 0 ? `\n실패: ${result.failed_count}개` : ''}`;
+            
+            showAlert(message, 'success');
+            
+            // 리뷰 목록 새로고침
+            setTimeout(() => {
+                loadReviews();
+                loadStats();
+            }, 2000);
+            
+        } else {
+            throw new Error(result.detail || result.message || '일괄 등록에 실패했습니다.');
+        }
+        
+    } catch (error) {
+        console.error('일괄 등록 오류:', error);
+        addDebugInfo(`일괄 등록 실패: ${error.message}`);
+        showAlert(`일괄 등록 실패: ${error.message}`, 'danger');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = originalText;
+    }
+}
+
 // 유틸리티 함수들
 function escapeHtml(text) {
     if (!text) return '';
@@ -741,6 +1051,52 @@ function getStatusText(status) {
         'unknown': '알 수 없음'
     };
     return statusMap[status] || status;
+}
+
+function getReplyTypeText(method) {
+    const methodMap = {
+        'ai_auto': 'AI 자동생성',
+        'ai_manual': 'AI 수동선택',
+        'ai_retry': 'AI 재생성',
+        'full_manual': '완전수동'
+    };
+    return methodMap[method] || method;
+}
+
+function getPlatformText(platform) {
+    const platformMap = {
+        'baemin': '배달의민족',
+        'yogiyo': '요기요',
+        'coupang': '쿠팡이츠'
+    };
+    return platformMap[platform] || platform;
+}
+
+async function handleRetryReply(reviewId) {
+    try {
+        const response = await fetch(`/api/reply-status/${reviewId}/retry`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${getToken()}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+            showAlert('답글 재시도가 시작되었습니다.', 'info');
+            setTimeout(() => {
+                loadReviews();
+            }, 3000);
+        } else {
+            throw new Error(result.detail || '재시도 실패');
+        }
+        
+    } catch (error) {
+        console.error('답글 재시도 오류:', error);
+        showAlert(`답글 재시도 실패: ${error.message}`, 'danger');
+    }
 }
 
 async function refreshData() {
