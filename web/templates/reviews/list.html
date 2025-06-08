@@ -67,6 +67,16 @@
         color: #991b1b;
     }
     
+    .status-generated {
+        background-color: #d1ecf1;
+        color: #0c5460;
+    }
+    
+    .status-ready_to_post {
+        background-color: #cce5ff;
+        color: #004085;
+    }
+    
     .platform-badge {
         padding: 0.25rem 0.5rem;
         border-radius: 4px;
@@ -87,6 +97,102 @@
     .platform-coupang {
         background-color: #5a2e0e;
         color: white;
+    }
+    
+    .ai-controls {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 1rem;
+        flex-wrap: wrap;
+    }
+    
+    .btn-ai {
+        background: linear-gradient(135deg, #28a745, #20c997);
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    
+    .btn-ai:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(40, 167, 69, 0.3);
+    }
+    
+    .btn-regenerate {
+        background: linear-gradient(135deg, #ffc107, #ff8c00);
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    
+    .btn-regenerate:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(255, 193, 7, 0.3);
+    }
+    
+    .ai-reply-section {
+        background: #f0f8ff;
+        border: 1px solid #bee5eb;
+        border-radius: 6px;
+        padding: 1rem;
+        margin-top: 1rem;
+    }
+    
+    .ai-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem;
+        background: #e3f2fd;
+        border-radius: 4px;
+        font-size: 0.875rem;
+        margin-top: 0.5rem;
+    }
+    
+    .quality-score {
+        padding: 0.25rem 0.5rem;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    
+    .quality-high {
+        background: #d4edda;
+        color: #155724;
+    }
+    
+    .quality-medium {
+        background: #fff3cd;
+        color: #856404;
+    }
+    
+    .quality-low {
+        background: #f8d7da;
+        color: #721c24;
+    }
+    
+    .loading {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid #f3f3f3;
+        border-top: 2px solid #007bff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-right: 0.5rem;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
     }
     
     .login-prompt {
@@ -134,8 +240,8 @@
     <div id="mainContent" style="display: block;">
         <!-- 페이지 헤더 -->
         <div class="mb-4">
-            <h1 class="mb-2">리뷰 관리</h1>
-            <p class="text-muted">고객 리뷰를 확인하고 답글을 작성하세요</p>
+            <h1 class="mb-2">🤖 AI 리뷰 관리</h1>
+            <p class="text-muted">고객 리뷰를 확인하고 AI 답글을 생성하세요</p>
             <button onclick="toggleDebug()" class="btn btn-sm btn-secondary">디버그 토글</button>
         </div>
         
@@ -184,6 +290,8 @@
                         <select id="statusFilter" class="form-control">
                             <option value="">전체</option>
                             <option value="pending">미답변</option>
+                            <option value="generated">AI 생성됨</option>
+                            <option value="ready_to_post">등록 준비</option>
                             <option value="posted">답변완료</option>
                             <option value="failed">실패</option>
                         </select>
@@ -436,34 +544,7 @@ async function loadReviews() {
         addDebugInfo('리뷰 목록 응답 개수: ' + (Array.isArray(reviews) ? reviews.length : 'N/A'));
         
         if (Array.isArray(reviews) && reviews.length > 0) {
-            const reviewsHtml = reviews.map(review => 
-                '<div class="review-card">' +
-                    '<div class="d-flex justify-content-between align-items-start mb-2">' +
-                        '<div>' +
-                            '<span class="platform-badge platform-' + (review.platform || 'unknown') + '">' + (review.platform || 'N/A') + '</span>' +
-                            '<span class="status-badge status-' + (review.response_status || 'unknown') + '">' +
-                                getStatusText(review.response_status || 'unknown') +
-                            '</span>' +
-                        '</div>' +
-                        '<div class="text-muted">' +
-                            formatDate(review.review_date || new Date().toISOString()) +
-                        '</div>' +
-                    '</div>' +
-                    '<div class="mb-2">' +
-                        '<strong>' + escapeHtml(review.review_name || '익명') + '</strong>' +
-                        '<span class="rating-stars ml-2">' + '★'.repeat(review.rating || 0) + '☆'.repeat(5-(review.rating || 0)) + '</span>' +
-                    '</div>' +
-                    (review.ordered_menu ? '<p class="text-muted small mb-2">주문: ' + escapeHtml(review.ordered_menu) + '</p>' : '') +
-                    '<p class="mb-3">' + escapeHtml(review.review_content || '') + '</p>' +
-                    (review.final_response ? 
-                        '<div class="bg-light p-3 rounded mb-2">' +
-                            '<small class="text-muted">답글:</small>' +
-                            '<p class="mb-0">' + escapeHtml(review.final_response) + '</p>' +
-                        '</div>' : '') +
-                '</div>'
-            ).join('');
-            
-            document.getElementById('reviewsList').innerHTML = reviewsHtml;
+            displayReviews(reviews);
             addDebugInfo('리뷰 UI 렌더링 완료');
         } else {
             document.getElementById('reviewsList').innerHTML = 
@@ -484,6 +565,143 @@ async function loadReviews() {
                 '<p class="small">' + error.message + '</p>' +
                 '<button class="btn btn-primary btn-sm mt-2" onclick="loadReviews()">다시 시도</button>' +
             '</div>';
+    }
+}
+
+// 리뷰 목록 표시 (AI 기능 포함)
+function displayReviews(reviews) {
+    const reviewsHtml = reviews.map(review => {
+        const aiControls = (review.response_status === 'pending' || review.response_status === 'generated') ? 
+            `<div class="ai-controls">
+                <button class="btn-ai" onclick="generateAIReply('${review.review_id}')">
+                    🤖 AI 답글 생성
+                </button>
+                ${review.response_status === 'generated' ? 
+                    `<button class="btn-regenerate" onclick="regenerateAIReply('${review.review_id}')">
+                        🔄 재생성
+                    </button>` : ''
+                }
+            </div>` : '';
+
+        const replySection = review.final_response ? 
+            `<div class="ai-reply-section">
+                <small class="text-muted">답글:</small>
+                <p class="mb-1">${escapeHtml(review.final_response)}</p>
+                ${(review.response_method === 'ai_auto' || review.response_method === 'ai_retry') ? 
+                    `<div class="ai-info">
+                        <span>🤖 AI 생성 답글</span>
+                        <span class="text-muted">${formatDate(review.response_at)}</span>
+                    </div>` : ''
+                }
+            </div>` : '';
+
+        return `<div class="review-card">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div>
+                    <span class="platform-badge platform-${review.platform || 'unknown'}">${review.platform || 'N/A'}</span>
+                    <span class="status-badge status-${review.response_status || 'unknown'}">${getStatusText(review.response_status || 'unknown')}</span>
+                </div>
+                <div class="text-muted">${formatDate(review.review_date || new Date().toISOString())}</div>
+            </div>
+            <div class="mb-2">
+                <strong>${escapeHtml(review.review_name || '익명')}</strong>
+                <span class="rating-stars ml-2">${'★'.repeat(review.rating || 0)}${'☆'.repeat(5-(review.rating || 0))}</span>
+            </div>
+            ${review.ordered_menu ? `<p class="text-muted small mb-2">주문: ${escapeHtml(review.ordered_menu)}</p>` : ''}
+            <p class="mb-3">${escapeHtml(review.review_content || '')}</p>
+            ${aiControls}
+            ${replySection}
+        </div>`;
+    }).join('');
+    
+    document.getElementById('reviewsList').innerHTML = reviewsHtml;
+}
+
+// AI 답글 생성
+async function generateAIReply(reviewId) {
+    const button = event.target;
+    const originalText = button.innerHTML;
+    
+    button.innerHTML = '<span class="loading"></span>생성 중...';
+    button.disabled = true;
+    
+    addDebugInfo('AI 답글 생성 시작: ' + reviewId);
+    
+    try {
+        const response = await fetch('/api/reviews/' + reviewId + '/generate-reply', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + getToken(),
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'HTTP ' + response.status);
+        }
+        
+        const result = await response.json();
+        addDebugInfo('AI 답글 생성 완료: ' + JSON.stringify(result));
+        
+        if (result.success) {
+            showAlert(`AI 답글이 생성되었습니다!\n품질점수: ${(result.quality_score * 100).toFixed(1)}%`, 'success');
+            loadReviews(); // 새로고침
+        } else {
+            throw new Error(result.message || '답글 생성 실패');
+        }
+        
+    } catch (error) {
+        console.error('AI 답글 생성 실패:', error);
+        addDebugInfo('AI 답글 생성 실패: ' + error.message);
+        showAlert('답글 생성 실패: ' + error.message, 'danger');
+    } finally {
+        button.innerHTML = originalText;
+        button.disabled = false;
+    }
+}
+
+// AI 답글 재생성
+async function regenerateAIReply(reviewId) {
+    const button = event.target;
+    const originalText = button.innerHTML;
+    
+    button.innerHTML = '<span class="loading"></span>재생성 중...';
+    button.disabled = true;
+    
+    addDebugInfo('AI 답글 재생성 시작: ' + reviewId);
+    
+    try {
+        const response = await fetch('/api/reviews/' + reviewId + '/regenerate-reply', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + getToken(),
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'HTTP ' + response.status);
+        }
+        
+        const result = await response.json();
+        addDebugInfo('AI 답글 재생성 완료: ' + JSON.stringify(result));
+        
+        if (result.success) {
+            showAlert(`AI 답글이 재생성되었습니다!\n품질점수: ${(result.quality_score * 100).toFixed(1)}%`, 'success');
+            loadReviews(); // 새로고침
+        } else {
+            throw new Error(result.message || '답글 재생성 실패');
+        }
+        
+    } catch (error) {
+        console.error('AI 답글 재생성 실패:', error);
+        addDebugInfo('AI 답글 재생성 실패: ' + error.message);
+        showAlert('답글 재생성 실패: ' + error.message, 'danger');
+    } finally {
+        button.innerHTML = originalText;
+        button.disabled = false;
     }
 }
 
@@ -516,6 +734,8 @@ function formatDate(dateStr) {
 function getStatusText(status) {
     const statusMap = {
         'pending': '미답변',
+        'generated': 'AI 생성됨',
+        'ready_to_post': '등록 준비',
         'posted': '답변완료',
         'failed': '실패',
         'unknown': '알 수 없음'
