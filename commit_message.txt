@@ -1,0 +1,8 @@
+feat: implement real platform integration in ReplyPostingService
+
+- Replace dummy implementation with actual browser automation
+- Implement Baemin reply posting using BaeminReplyManager  
+- Add Supabase integration for review and store data
+- Implement login credential decryption and security
+- Enhance error handling and status tracking
+- Maintain Step 4 API compatibility

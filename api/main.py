@@ -84,6 +84,9 @@ from api.routes import auth, pages, stores, reviews
 # Step 4: 새로운 답글 등록 관련 라우터 임포트
 from api.routes import reply_posting_endpoints, reply_status
 
+# 테스트용 라우터 임포트
+from api.routes import test_reply_posting
+
 # 기존 라우터 등록
 app.include_router(auth.router)
 app.include_router(stores.router)
@@ -93,6 +96,9 @@ app.include_router(reviews.router)
 # Step 4: 새로운 라우터 등록
 app.include_router(reply_posting_endpoints.router)
 app.include_router(reply_status.router)
+
+# 테스트용 라우터 등록
+app.include_router(test_reply_posting.router)
 
 @app.get("/api")
 async def api_info():
@@ -150,6 +156,11 @@ async def list_endpoints():
                 "매장_요약_조회": "GET /api/reply-status/stores/{user_code}/summary",
                 "답글_재시도": "POST /api/reply-status/{review_id}/retry"
             }
+        },
+        "테스트용_엔드포인트": {
+            "테스트_답글_등록": "POST /api/test-reply-posting/{review_id}/submit",
+            "리뷰_정보_조회": "GET /api/test-reply-posting/{review_id}/info",
+            "매장_정보_조회": "GET /api/test-reply-posting/stores/{store_code}/info"
         },
         "문서": {
             "Swagger_UI": "/docs",
