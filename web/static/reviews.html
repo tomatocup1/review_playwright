@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>리뷰 관리 - AI 답글 시스템</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #2196F3, #21CBF3);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .control-group label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        select, input, button {
+            padding: 12px 16px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        select:focus, input:focus {
+            outline: none;
+            border-color: #2196F3;
+            box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
+        }
+
+        button {
+            background: linear-gradient(135deg, #2196F3, #21CBF3);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(33, 150, 243, 0.3);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        .reviews-container {
+            display: grid;
+            gap: 20px;
+        }
+
+        .review-card {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .review-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+
+        .review-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .review-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .rating {
+            display: flex;
+            gap: 2px;
+        }
+
+        .star {
+            color: #ffc107;
+            font-size: 18px;
+        }
+
+        .star.empty {
+            color: #e9ecef;
+        }
+
+        .review-meta {
+            font-size: 14px;
+            color: #6c757d;
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-generated {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .status-posted {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .review-content {
+            margin: 15px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            border-left: 4px solid #2196F3;
+        }
+
+        .menu-info {
+            background: #e3f2fd;
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+
+        .reply-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .reply-content {
+            background: #f0f8ff;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #28a745;
+            margin: 10px 0;
+        }
+
+        .ai-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .btn-ai {
+            background: linear-gradient(135deg, #28a745, #20c997);
+        }
+
+        .btn-ai:hover {
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
+        }
+
+        .btn-regenerate {
+            background: linear-gradient(135deg, #ffc107, #ff8c00);
+        }
+
+        .btn-regenerate:hover {
+            box-shadow: 0 5px 15px rgba(255, 193, 7, 0.3);
+        }
+
+        .quality-score {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .quality-high {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .quality-medium {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .quality-low {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .debug-panel {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .debug-toggle {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 15px;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #2196F3;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .reply-textarea {
+            width: 100%;
+            min-height: 100px;
+            margin: 10px 0;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: inherit;
+            resize: vertical;
+        }
+
+        .reply-textarea:focus {
+            outline: none;
+            border-color: #2196F3;
+            box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
+        }
+
+        .ai-info {
+            background: #e3f2fd;
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .response-time {
+            color: #666;
+            font-size: 11px;
+        }
+
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .stats-container {
+                grid-template-columns: 1fr;
+            }
+
+            .review-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .ai-controls {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 AI 답글 관리 시스템</h1>
+            <p>매장 리뷰에 AI가 자동으로 답글을 생성합니다</p>
+        </div>
+
+        <div class="content">
+            <!-- 컨트롤 패널 -->
+            <div class="controls">
+                <div class="control-group">
+                    <label for="storeSelect">매장 선택</label>
+                    <select id="storeSelect">
+                        <option value="">매장을 선택하세요</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label for="statusFilter">상태 필터</label>
+                    <select id="statusFilter">
+                        <option value="">전체</option>
+                        <option value="pending">미답변</option>
+                        <option value="generated">AI 생성됨</option>
+                        <option value="ready_to_post">등록 준비</option>
+                        <option value="posted">답변 완료</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label for="ratingFilter">별점 필터</label>
+                    <select id="ratingFilter">
+                        <option value="">전체</option>
+                        <option value="5">⭐⭐⭐⭐⭐ (5점)</option>
+                        <option value="4">⭐⭐⭐⭐ (4점)</option>
+                        <option value="3">⭐⭐⭐ (3점)</option>
+                        <option value="2">⭐⭐ (2점)</option>
+                        <option value="1">⭐ (1점)</option>
+                    </select>
+                </div>
+
+                <button onclick="loadReviews()">🔄 새로고침</button>
+                <button class="debug-toggle" onclick="toggleDebug()">🐛 디버그 토글</button>
+            </div>
+
+            <!-- 통계 -->
+            <div class="stats-container" id="statsContainer">
+                <div class="stat-card">
+                    <div class="stat-value" id="totalReviews">-</div>
+                    <div class="stat-label">총 리뷰수</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="avgRating">-</div>
+                    <div class="stat-label">평균 별점</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="replyRate">-</div>
+                    <div class="stat-label">답변율</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="pendingReviews">-</div>
+                    <div class="stat-label">미답변</div>
+                </div>
+            </div>
+
+            <!-- 디버그 패널 -->
+            <div id="debugPanel" class="debug-panel" style="display: none;">
+                <h4>🐛 디버그 정보</h4>
+                <div id="debugInfo">API 호출 정보가 여기에 표시됩니다...</div>
+            </div>
+
+            <!-- 리뷰 목록 -->
+            <div class="reviews-container" id="reviewsContainer">
+                <p style="text-align: center; color: #666; padding: 40px;">
+                    매장을 선택하여 리뷰를 조회하세요.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 전역 변수
+        let isDebugMode = false;
+        let currentStore = '';
+        let allStores = [];
+
+        // 페이지 로드시 초기화
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStores();
+        });
+
+        // 디버그 모드 토글
+        function toggleDebug() {
+            isDebugMode = !isDebugMode;
+            const panel = document.getElementById('debugPanel');
+            panel.style.display = isDebugMode ? 'block' : 'none';
+            
+            if (isDebugMode) {
+                debugLog('디버그 모드 활성화');
+            }
+        }
+
+        // 디버그 로그
+        function debugLog(message, data = null) {
+            if (!isDebugMode) return;
+            
+            const debugInfo = document.getElementById('debugInfo');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${message}${data ? '\n' + JSON.stringify(data, null, 2) : ''}`;
+            
+            debugInfo.innerHTML = logEntry + '\n\n' + debugInfo.innerHTML;
+        }
+
+        // 매장 목록 로드
+        async function loadStores() {
+            try {
+                debugLog('매장 목록 로드 시작');
+                
+                const response = await fetch('/api/stores/user-stores', {
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const stores = await response.json();
+                allStores = stores;
+                
+                debugLog('매장 목록 로드 완료', stores);
+
+                const storeSelect = document.getElementById('storeSelect');
+                storeSelect.innerHTML = '<option value="">매장을 선택하세요</option>';
+                
+                stores.forEach(store => {
+                    const option = document.createElement('option');
+                    option.value = store.store_code;
+                    option.textContent = `${store.store_name} (${store.platform})`;
+                    storeSelect.appendChild(option);
+                });
+
+                // 매장 선택 이벤트
+                storeSelect.addEventListener('change', function() {
+                    currentStore = this.value;
+                    if (currentStore) {
+                        loadStats();
+                        loadReviews();
+                    }
+                });
+
+            } catch (error) {
+                console.error('매장 목록 로드 실패:', error);
+                debugLog('매장 목록 로드 실패', error.message);
+            }
+        }
+
+        // 통계 로드
+        async function loadStats() {
+            if (!currentStore) return;
+
+            try {
+                debugLog('통계 로드 시작', { store_code: currentStore });
+                
+                const response = await fetch(`/api/reviews/stats/${currentStore}`, {
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const stats = await response.json();
+                debugLog('통계 로드 완료', stats);
+
+                // 통계 UI 업데이트
+                document.getElementById('totalReviews').textContent = stats.total_reviews || 0;
+                document.getElementById('avgRating').textContent = (stats.avg_rating || 0).toFixed(1);
+                document.getElementById('replyRate').textContent = (stats.reply_rate || 0).toFixed(1) + '%';
+                document.getElementById('pendingReviews').textContent = stats.pending_reviews || 0;
+
+            } catch (error) {
+                console.error('통계 로드 실패:', error);
+                debugLog('통계 로드 실패', error.message);
+            }
+        }
+
+        // 리뷰 목록 로드
+        async function loadReviews() {
+            if (!currentStore) return;
+
+            const container = document.getElementById('reviewsContainer');
+            container.innerHTML = '<p style="text-align: center; padding: 20px;">로딩 중...</p>';
+
+            try {
+                const status = document.getElementById('statusFilter').value;
+                const rating = document.getElementById('ratingFilter').value;
+                
+                let url = `/api/reviews/${currentStore}?limit=20`;
+                if (status) url += `&status=${status}`;
+                if (rating) url += `&rating=${rating}`;
+
+                debugLog('리뷰 목록 로드 시작', { url });
+
+                const response = await fetch(url, {
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const reviews = await response.json();
+                debugLog('리뷰 목록 로드 완료', reviews);
+
+                displayReviews(reviews);
+
+            } catch (error) {
+                console.error('리뷰 로드 실패:', error);
+                debugLog('리뷰 로드 실패', error.message);
+                container.innerHTML = `<p style="text-align: center; color: red; padding: 20px;">리뷰 로드 실패: ${error.message}</p>`;
+            }
+        }
+
+        // 리뷰 목록 표시
+        function displayReviews(reviews) {
+            const container = document.getElementById('reviewsContainer');
+            
+            if (!reviews || reviews.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">조건에 맞는 리뷰가 없습니다.</p>';
+                return;
+            }
+
+            container.innerHTML = reviews.map(review => createReviewCard(review)).join('');
+        }
+
+        // 리뷰 카드 생성
+        function createReviewCard(review) {
+            const stars = '★'.repeat(review.rating) + '☆'.repeat(5 - review.rating);
+            const statusClass = `status-${review.response_status}`;
+            const statusText = getStatusText(review.response_status);
+            
+            const aiControls = (review.response_status === 'pending' || review.response_status === 'generated') ? `
+                <div class="ai-controls">
+                    <button class="btn-ai" onclick="generateReply('${review.review_id}')">
+                        🤖 AI 답글 생성
+                    </button>
+                    ${review.response_status === 'generated' ? `
+                        <button class="btn-regenerate" onclick="regenerateReply('${review.review_id}')">
+                            🔄 재생성
+                        </button>
+                    ` : ''}
+                </div>
+            ` : '';
+
+            const replySection = review.final_response ? `
+                <div class="reply-section">
+                    <strong>📝 답글:</strong>
+                    <div class="reply-content">${review.final_response}</div>
+                    ${review.response_method === 'ai_auto' || review.response_method === 'ai_retry' ? `
+                        <div class="ai-info">
+                            <span>🤖 AI 생성 답글</span>
+                            <span class="response-time">${new Date(review.response_at).toLocaleString()}</span>
+                        </div>
+                    ` : ''}
+                </div>
+            ` : '';
+
+            return `
+                <div class="review-card">
+                    <div class="review-header">
+                        <div class="review-info">
+                            <div class="rating">${stars}</div>
+                            <span class="review-meta">${review.review_name} | ${new Date(review.review_date).toLocaleDateString()}</span>
+                        </div>
+                        <span class="status-badge ${statusClass}">${statusText}</span>
+                    </div>
+
+                    ${review.ordered_menu ? `
+                        <div class="menu-info">
+                            🍽️ 주문메뉴: ${review.ordered_menu}
+                        </div>
+                    ` : ''}
+
+                    <div class="review-content">
+                        ${review.review_content || '리뷰 내용이 없습니다.'}
+                    </div>
+
+                    ${aiControls}
+                    ${replySection}
+                </div>
+            `;
+        }
+
+        // 상태 텍스트 반환
+        function getStatusText(status) {
+            const statusMap = {
+                'pending': '미답변',
+                'generated': 'AI 생성됨',
+                'ready_to_post': '등록 준비',
+                'posted': '답변 완료',
+                'failed': '실패'
+            };
+            return statusMap[status] || status;
+        }
+
+        // AI 답글 생성
+        async function generateReply(reviewId) {
+            const button = event.target;
+            const originalText = button.innerHTML;
+            
+            button.innerHTML = '<span class="loading"></span>답글 생성 중...';
+            button.disabled = true;
+
+            try {
+                debugLog('AI 답글 생성 시작', { review_id: reviewId });
+
+                const response = await fetch(`/api/reviews/${reviewId}/generate-reply`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || `HTTP ${response.status}`);
+                }
+
+                const result = await response.json();
+                debugLog('AI 답글 생성 완료', result);
+
+                if (result.success) {
+                    alert(`AI 답글이 생성되었습니다!\n\n품질점수: ${(result.quality_score * 100).toFixed(1)}%\n처리시간: ${result.processing_time_ms}ms`);
+                    loadReviews(); // 목록 새로고침
+                } else {
+                    throw new Error(result.message || '답글 생성 실패');
+                }
+
+            } catch (error) {
+                console.error('AI 답글 생성 실패:', error);
+                debugLog('AI 답글 생성 실패', error.message);
+                alert(`답글 생성 실패: ${error.message}`);
+            } finally {
+                button.innerHTML = originalText;
+                button.disabled = false;
+            }
+        }
+
+        // AI 답글 재생성
+        async function regenerateReply(reviewId) {
+            const button = event.target;
+            const originalText = button.innerHTML;
+            
+            button.innerHTML = '<span class="loading"></span>재생성 중...';
+            button.disabled = true;
+
+            try {
+                debugLog('AI 답글 재생성 시작', { review_id: reviewId });
+
+                const response = await fetch(`/api/reviews/${reviewId}/regenerate-reply`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || `HTTP ${response.status}`);
+                }
+
+                const result = await response.json();
+                debugLog('AI 답글 재생성 완료', result);
+
+                if (result.success) {
+                    alert(`AI 답글이 재생성되었습니다!\n\n품질점수: ${(result.quality_score * 100).toFixed(1)}%\n시도횟수: ${result.attempt_number}`);
+                    loadReviews(); // 목록 새로고침
+                } else {
+                    throw new Error(result.message || '답글 재생성 실패');
+                }
+
+            } catch (error) {
+                console.error('AI 답글 재생성 실패:', error);
+                debugLog('AI 답글 재생성 실패', error.message);
+                alert(`답글 재생성 실패: ${error.message}`);
+            } finally {
+                button.innerHTML = originalText;
+                button.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
