@@ -1,0 +1,486 @@
+/* 
+ * 리뷰 답글 등록 관련 CSS 스타일
+ * 웹 UI에서 답글 등록 기능의 시각적 요소 스타일링
+ */
+
+/* ===================================
+   답글 등록 관련 스타일
+   =================================== */
+
+/* 답글 등록 버튼 */
+.post-reply-btn {
+    background: linear-gradient(135deg, #28a745, #20c997);
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.post-reply-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
+    color: white;
+}
+
+.post-reply-btn:active {
+    transform: translateY(0);
+}
+
+.post-reply-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* 재시도 버튼 */
+.retry-reply-btn {
+    background: linear-gradient(135deg, #ffc107, #ff8c00);
+    color: white;
+    border: none;
+    padding: 0.4rem 0.8rem;
+    border-radius: 5px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.retry-reply-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(255, 193, 7, 0.3);
+    color: white;
+}
+
+/* 리뷰 카드 액션 영역 */
+.review-actions {
+    margin-top: 15px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.review-card {
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    transition: all 0.3s ease;
+    background: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.review-card:hover {
+    box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+
+/* 리뷰 텍스트 */
+.review-text {
+    margin-bottom: 15px;
+    line-height: 1.6;
+    color: #333;
+}
+
+/* 상태 배지 스타일 개선 */
+.badge {
+    font-size: 0.75rem;
+    padding: 0.4rem 0.8rem;
+    border-radius: 20px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.badge.bg-success {
+    background: linear-gradient(135deg, #28a745, #20c997) !important;
+}
+
+.badge.bg-warning {
+    background: linear-gradient(135deg, #ffc107, #ff8c00) !important;
+    color: white !important;
+}
+
+.badge.bg-info {
+    background: linear-gradient(135deg, #17a2b8, #007bff) !important;
+}
+
+.badge.bg-danger {
+    background: linear-gradient(135deg, #dc3545, #c82333) !important;
+}
+
+/* ===================================
+   모달 스타일
+   =================================== */
+
+#postReplyModal .modal-dialog {
+    max-width: 800px;
+}
+
+#postReplyModal .modal-content {
+    border-radius: 15px;
+    border: none;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+}
+
+#postReplyModal .modal-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 15px 15px 0 0;
+    border-bottom: none;
+}
+
+#postReplyModal .modal-title {
+    font-weight: 600;
+}
+
+#postReplyModal .btn-close {
+    filter: invert(1);
+}
+
+#postReplyModal .modal-body {
+    padding: 25px;
+}
+
+/* 모달 내용 영역 */
+#postReplyModal .border {
+    border-width: 2px !important;
+    border-radius: 10px !important;
+}
+
+#postReplyModal .bg-light {
+    background-color: #f8f9fa !important;
+}
+
+#modalReplyContent {
+    background-color: #f0f8ff !important;
+    border-color: #bee5eb !important;
+}
+
+/* 모달 내용 스크롤 */
+#modalReviewContent,
+#modalReplyContent {
+    max-height: 200px;
+    overflow-y: auto;
+    word-break: break-word;
+    line-height: 1.5;
+}
+
+/* ===================================
+   일괄 처리 섹션 스타일
+   =================================== */
+
+.batch-actions {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border: 2px solid #dee2e6;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 25px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+.batch-actions h6 {
+    color: #495057;
+    font-weight: 600;
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.batch-actions .btn {
+    border-radius: 8px;
+    padding: 0.6rem 1.2rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.batch-actions .btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.batch-actions .btn-primary {
+    background: linear-gradient(135deg, #007bff, #0056b3);
+    border: none;
+}
+
+.batch-actions .btn-info {
+    background: linear-gradient(135deg, #17a2b8, #138496);
+    border: none;
+}
+
+.batch-actions .btn-success {
+    background: linear-gradient(135deg, #28a745, #1e7e34);
+    border: none;
+}
+
+/* ===================================
+   알림 및 상태 표시
+   =================================== */
+
+/* 페이지 상단 알림 */
+.alert.position-fixed {
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    max-width: 450px;
+    box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    border-radius: 12px;
+    border: none;
+    animation: slideInRight 0.4s ease-out;
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* 로딩 스피너 */
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+}
+
+.loading {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #f3f3f3;
+    border-top: 2px solid #007bff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-right: 0.5rem;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* ===================================
+   반응형 디자인
+   =================================== */
+
+/* 모바일 환경 */
+@media (max-width: 768px) {
+    #postReplyModal .modal-dialog {
+        max-width: 95vw;
+        margin: 10px;
+    }
+    
+    #postReplyModal .modal-body {
+        padding: 15px;
+    }
+    
+    #postReplyModal .row {
+        display: block;
+    }
+    
+    #postReplyModal .col-md-6 {
+        margin-bottom: 20px;
+    }
+    
+    .batch-actions {
+        padding: 15px;
+    }
+    
+    .batch-actions .d-flex {
+        flex-direction: column;
+        gap: 10px !important;
+    }
+    
+    .batch-actions .btn {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .review-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .review-actions .btn {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .alert.position-fixed {
+        position: fixed !important;
+        top: 10px;
+        left: 10px;
+        right: 10px;
+        max-width: none;
+    }
+}
+
+/* 태블릿 환경 */
+@media (max-width: 992px) {
+    .batch-actions .d-flex {
+        gap: 8px !important;
+    }
+    
+    .batch-actions .btn {
+        font-size: 0.8rem;
+        padding: 0.5rem 1rem;
+    }
+}
+
+/* ===================================
+   접근성 개선
+   =================================== */
+
+/* 포커스 표시 */
+.post-reply-btn:focus,
+.retry-reply-btn:focus,
+.batch-actions .btn:focus {
+    outline: 2px solid #007bff;
+    outline-offset: 2px;
+}
+
+/* 고대비 모드 지원 */
+@media (prefers-contrast: high) {
+    .review-card {
+        border-width: 2px;
+        border-color: #000;
+    }
+    
+    .post-reply-btn,
+    .retry-reply-btn,
+    .batch-actions .btn {
+        border: 2px solid;
+    }
+}
+
+/* 모션 감소 설정 */
+@media (prefers-reduced-motion: reduce) {
+    .post-reply-btn,
+    .retry-reply-btn,
+    .batch-actions .btn,
+    .review-card,
+    .alert.position-fixed {
+        transition: none;
+        animation: none;
+    }
+    
+    .post-reply-btn:hover,
+    .retry-reply-btn:hover,
+    .batch-actions .btn:hover,
+    .review-card:hover {
+        transform: none;
+    }
+}
+
+/* ===================================
+   다크모드 지원 (추후 확장용)
+   =================================== */
+
+@media (prefers-color-scheme: dark) {
+    .review-card {
+        background-color: #2d3748;
+        border-color: #4a5568;
+        color: #e2e8f0;
+    }
+    
+    .review-text {
+        color: #e2e8f0;
+    }
+    
+    .batch-actions {
+        background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+        border-color: #4a5568;
+    }
+    
+    .batch-actions h6 {
+        color: #e2e8f0;
+    }
+    
+    #postReplyModal .modal-content {
+        background-color: #2d3748;
+        color: #e2e8f0;
+    }
+    
+    #postReplyModal .bg-light {
+        background-color: #4a5568 !important;
+    }
+}
+
+/* ===================================
+   추가 유틸리티 클래스
+   =================================== */
+
+.text-success-gradient {
+    background: linear-gradient(135deg, #28a745, #20c997);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-weight: 600;
+}
+
+.text-warning-gradient {
+    background: linear-gradient(135deg, #ffc107, #ff8c00);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-weight: 600;
+}
+
+.shadow-custom {
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+.border-gradient {
+    border: 2px solid;
+    border-image: linear-gradient(135deg, #667eea 0%, #764ba2 100%) 1;
+    border-radius: 10px;
+}
+
+/* 버튼 그룹 스타일 */
+.btn-group-custom {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.btn-group-custom .btn {
+    flex: 1;
+    min-width: 120px;
+}
+
+/* 통계 카드 개선 */
+.stats-card-enhanced {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 1.5rem;
+    border-radius: 15px;
+    margin-bottom: 1rem;
+    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.15);
+    transition: transform 0.3s ease;
+}
+
+.stats-card-enhanced:hover {
+    transform: translateY(-3px);
+}
+
+.stats-card-enhanced h3 {
+    font-size: 2.2rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
