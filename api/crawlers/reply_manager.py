@@ -2,6 +2,7 @@
 답글 관리 기본 클래스 (등록 + 수정 통합)
 모든 플랫폼에서 공통으로 사용할 기본 구조
 """
+import os
 import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple, Any
@@ -61,18 +62,43 @@ class BaseReplyManager(ABC):
             bool: 성공 여부
         """
         try:
+            # Playwright 브라우저 경로 설정
+            playwright_path = os.path.expanduser("~") + r"\AppData\Local\ms-playwright"
+            if os.path.exists(playwright_path):
+                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = playwright_path
+                self.logger.info(f"Playwright browsers path set to: {playwright_path}")
+            
             self.playwright = sync_playwright().start()
-            self.browser = self.playwright.chromium.launch(
-                headless=headless,
-                args=[
+            
+            # 브라우저 실행 옵션
+            launch_options = {
+                "headless": headless,
+                "args": [
                     '--no-sandbox',
                     '--disable-dev-shm-usage',
-                    '--disable-blink-features=AutomationControlled'
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process'
                 ]
-            )
+            }
+            
+            # Chromium 브라우저 실행
+            try:
+                self.browser = self.playwright.chromium.launch(**launch_options)
+            except Exception as e:
+                self.logger.warning(f"Chromium launch failed: {e}")
+                # 브라우저 경로를 직접 지정해서 재시도
+                chromium_path = os.path.join(playwright_path, "chromium-1091", "chrome-win", "chrome.exe")
+                if os.path.exists(chromium_path):
+                    launch_options["executable_path"] = chromium_path
+                    self.browser = self.playwright.chromium.launch(**launch_options)
+                else:
+                    raise Exception("Chromium browser not found")
             
             context = self.browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1280, 'height': 720},
+                locale='ko-KR'
             )
             self.page = context.new_page()
             
@@ -81,6 +107,7 @@ class BaseReplyManager(ABC):
             
         except Exception as e:
             self.logger.error(f"브라우저 초기화 실패: {str(e)}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
             return False
     
     @abstractmethod
