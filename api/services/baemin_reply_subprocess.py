@@ -1,65 +1,66 @@
 """
 배민 답글 등록을 위한 subprocess 실행 스크립트
-async 충돌을 피하기 위해 별도 프로세스에서 실행
 """
 import sys
 import json
+import os
 import logging
-from api.crawlers.baemin_reply_manager import BaeminReplyManager
+from typing import Dict, Any
 
-logging.basicConfig(level=logging.INFO)
+# 환경 변수 설정
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.expanduser("~") + r"\AppData\Local\ms-playwright"
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-def main():
-    """메인 함수"""
-    if len(sys.argv) < 4:
-        print(json.dumps({"error": "Invalid arguments"}))
-        return
-    
+def run_baemin_reply(params: Dict[str, Any]) -> Dict[str, Any]:
+    """배민 답글 등록 실행"""
     try:
-        # 인자 파싱
-        store_config = json.loads(sys.argv[1])
-        review_id = sys.argv[2]
-        reply_content = sys.argv[3]
+        from api.crawlers.baemin_reply_manager import BaeminReplyManager
         
-        logger.info(f"배민 답글 등록 시작: review_id={review_id}")
+        store_config = params['store_config']
+        review_id = params['review_id']
+        reply_content = params['reply_content']
+        
+        logger.info(f"배민 답글 등록 프로세스 시작: review_id={review_id}")
         
         # BaeminReplyManager 인스턴스 생성
         reply_manager = BaeminReplyManager(store_config)
         
         # 브라우저 설정 및 초기화
-        browser_setup = reply_manager.setup_browser(headless=True)
+        browser_setup = reply_manager.setup_browser(headless=True)  # headless 모드로 실행
         if not browser_setup:
-            print(json.dumps({
+            return {
                 'success': False,
                 'error': '브라우저 초기화 실패',
                 'review_id': review_id,
                 'platform': 'baemin'
-            }))
-            return
+            }
         
         try:
             # 로그인
             login_success, login_message = reply_manager.login_to_platform()
             if not login_success:
-                print(json.dumps({
+                return {
                     'success': False,
                     'error': f'로그인 실패: {login_message}',
                     'review_id': review_id,
                     'platform': 'baemin'
-                }))
-                return
+                }
             
             # 리뷰 관리 페이지로 이동
             nav_success, nav_message = reply_manager.navigate_to_reviews_page()
             if not nav_success:
-                print(json.dumps({
+                return {
                     'success': False,
                     'error': f'리뷰 페이지 이동 실패: {nav_message}',
                     'review_id': review_id,
                     'platform': 'baemin'
-                }))
-                return
+                }
             
             # 답글 등록 수행
             reply_result = reply_manager.manage_reply(
@@ -69,7 +70,7 @@ def main():
             )
             
             if reply_result['success']:
-                print(json.dumps({
+                return {
                     'success': True,
                     'review_id': review_id,
                     'platform': 'baemin',
@@ -77,26 +78,56 @@ def main():
                     'final_status': 'posted',
                     'action_taken': reply_result.get('action_taken', 'posted'),
                     'message': reply_result.get('message', '답글 등록 성공')
-                }))
+                }
             else:
-                print(json.dumps({
+                return {
                     'success': False,
                     'error': reply_result.get('message', '답글 등록 실패'),
                     'review_id': review_id,
                     'platform': 'baemin',
                     'error_details': reply_result
-                }))
+                }
                 
         finally:
+            # 브라우저 정리
             reply_manager.close_browser()
             
     except Exception as e:
-        print(json.dumps({
+        logger.error(f"배민 답글 등록 중 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        return {
             'success': False,
-            'error': f'답글 등록 중 오류: {str(e)}',
-            'review_id': review_id if 'review_id' in locals() else 'unknown',
+            'error': f'프로세스 실행 중 오류: {str(e)}',
+            'review_id': params.get('review_id', 'unknown'),
+            'platform': 'baemin',
+            'error_details': {
+                'exception': str(e),
+                'type': type(e).__name__
+            }
+        }
+
+def main():
+    """메인 함수 - stdin으로 파라미터 받아 실행"""
+    try:
+        # stdin으로 JSON 파라미터 받기
+        input_data = sys.stdin.read()
+        params = json.loads(input_data)
+        
+        # 답글 등록 실행
+        result = run_baemin_reply(params)
+        
+        # 결과를 JSON으로 출력
+        print(json.dumps(result, ensure_ascii=False))
+        
+    except Exception as e:
+        error_result = {
+            'success': False,
+            'error': f'파라미터 파싱 오류: {str(e)}',
             'platform': 'baemin'
-        }))
+        }
+        print(json.dumps(error_result, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()

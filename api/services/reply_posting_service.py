@@ -11,8 +11,7 @@ import time
 import json
 import sys
 import os
-import threading
-import queue
+import subprocess
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
@@ -340,7 +339,7 @@ class ReplyPostingService:
         reply_content: str
     ) -> Dict[str, Any]:
         """
-        배민 답글 등록
+        배민 답글 등록 - subprocess를 사용한 구현
         
         Args:
             review_data: 리뷰 데이터
@@ -353,140 +352,77 @@ class ReplyPostingService:
         review_id = review_data.get('review_id', 'unknown')
         
         try:
-            self.logger.info(f"배민 답글 등록 시작: review_id={review_id}")
+            self.logger.info(f"배민 답글 등록 시작 (subprocess): review_id={review_id}")
             
-            # threading을 사용한 간단한 해결책
-            import threading
-            import queue
+            # subprocess로 전달할 파라미터
+            params = {
+                'store_config': store_config,
+                'review_id': review_id,
+                'reply_content': reply_content
+            }
             
-            result_queue = queue.Queue()
+            # subprocess 실행을 위한 스크립트 경로
+            script_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), 
+                'baemin_reply_subprocess.py'
+            )
             
-            def run_browser_task():
-                """별도 스레드에서 실행할 브라우저 작업"""
-                reply_manager = None
+            # subprocess 실행
+            process = subprocess.Popen(
+                [sys.executable, script_path],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding='utf-8'
+            )
+            
+            # 파라미터 전달 및 결과 받기
+            stdout, stderr = process.communicate(
+                input=json.dumps(params, ensure_ascii=False),
+                timeout=self.PROCESSING_TIMEOUT
+            )
+            
+            if stderr:
+                self.logger.error(f"Subprocess 에러: {stderr}")
+            
+            if stdout:
                 try:
-                    # 동기 import를 여기서 수행
-                    from api.crawlers.baemin_reply_manager import BaeminReplyManager
+                    result = json.loads(stdout)
                     
-                    # BaeminReplyManager 인스턴스 생성
-                    reply_manager = BaeminReplyManager(store_config)
-                    
-                    # 브라우저 설정 및 초기화
-                    browser_setup = reply_manager.setup_browser(headless=False)  # 디버깅을 위해 headless=False
-                    if not browser_setup:
-                        result_queue.put({
-                            'success': False,
-                            'error': '브라우저 초기화 실패 - Playwright가 설치되지 않았거나 Chromium이 없습니다',
-                            'review_id': review_id,
-                            'platform': 'baemin',
-                            'error_details': {
-                                'message': 'playwright install chromium 명령을 실행해주세요'
-                            }
-                        })
-                        return
-                    
-                    # 로그인
-                    login_success, login_message = reply_manager.login_to_platform()
-                    if not login_success:
-                        result_queue.put({
-                            'success': False,
-                            'error': f'로그인 실패: {login_message}',
-                            'review_id': review_id,
-                            'platform': 'baemin'
-                        })
-                        return
-                    
-                    # 리뷰 관리 페이지로 이동
-                    nav_success, nav_message = reply_manager.navigate_to_reviews_page()
-                    if not nav_success:
-                        result_queue.put({
-                            'success': False,
-                            'error': f'리뷰 페이지 이동 실패: {nav_message}',
-                            'review_id': review_id,
-                            'platform': 'baemin'
-                        })
-                        return
-                    
-                    # 답글 등록 수행
-                    reply_result = reply_manager.manage_reply(
-                        review_id=review_id,
-                        reply_text=reply_content,
-                        action="auto"
-                    )
-                    
-                    if reply_result['success']:
-                        result_queue.put({
-                            'success': True,
-                            'review_id': review_id,
-                            'platform': 'baemin',
-                            'store_name': store_config.get('store_name', ''),
-                            'final_status': 'posted',
-                            'action_taken': reply_result.get('action_taken', 'posted'),
-                            'message': reply_result.get('message', '답글 등록 성공')
-                        })
+                    # 로깅
+                    if result.get('success'):
+                        self.logger.info(f"배민 답글 등록 성공 (subprocess): review_id={review_id}")
                     else:
-                        result_queue.put({
-                            'success': False,
-                            'error': reply_result.get('message', '답글 등록 실패'),
-                            'review_id': review_id,
-                            'platform': 'baemin',
-                            'error_details': reply_result
-                        })
-                        
-                except Exception as e:
-                    result_queue.put({
+                        self.logger.warning(f"배민 답글 등록 실패 (subprocess): review_id={review_id}, error={result.get('error')}")
+                    
+                    return result
+                    
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"Subprocess 결과 파싱 오류: {e}, stdout: {stdout}")
+                    return {
                         'success': False,
-                        'error': f'브라우저 작업 중 오류: {str(e)}',
+                        'error': f'결과 파싱 오류: {str(e)}',
                         'review_id': review_id,
-                        'platform': 'baemin',
-                        'error_details': {
-                            'exception': str(e),
-                            'type': type(e).__name__
-                        }
-                    })
-                finally:
-                    # 브라우저 정리
-                    if reply_manager:
-                        try:
-                            reply_manager.close_browser()
-                        except:
-                            pass
-            
-            # 스레드 시작
-            thread = threading.Thread(target=run_browser_task)
-            thread.start()
-            
-            # 스레드 완료 대기 (타임아웃 설정)
-            thread.join(timeout=self.PROCESSING_TIMEOUT)
-            
-            if thread.is_alive():
-                # 타임아웃 발생
-                self.logger.error("브라우저 작업 타임아웃")
+                        'platform': 'baemin'
+                    }
+            else:
                 return {
                     'success': False,
-                    'error': '브라우저 작업 타임아웃',
+                    'error': 'Subprocess 실행 결과 없음',
                     'review_id': review_id,
-                    'platform': 'baemin'
+                    'platform': 'baemin',
+                    'stderr': stderr
                 }
-            
-            # 결과 가져오기
-            try:
-                result = result_queue.get_nowait()
-            except queue.Empty:
-                result = {
-                    'success': False,
-                    'error': '결과를 가져올 수 없습니다',
-                    'review_id': review_id,
-                    'platform': 'baemin'
-                }
-            
-            # 로깅
-            if result['success']:
-                self.logger.info(f"배민 답글 등록 성공: review_id={review_id}, action={result.get('action_taken')}")
-            else:
-                self.logger.warning(f"배민 답글 등록 실패: review_id={review_id}, error={result.get('error')}")
-            
-            return result
+                
+        except subprocess.TimeoutExpired:
+            self.logger.error(f"Subprocess 타임아웃: review_id={review_id}")
+            return {
+                'success': False,
+                'error': '브라우저 작업 타임아웃',
+                'review_id': review_id,
+                'platform': 'baemin'
+            }
             
         except Exception as e:
             error_msg = f"배민 답글 등록 중 예외: {str(e)}"
