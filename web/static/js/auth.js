@@ -6,7 +6,7 @@
 function formatPhoneNumber(input) {
     // 숫자만 추출
     const numbers = input.value.replace(/\D/g, '');
-    
+
     // 포맷팅
     let formatted = '';
     if (numbers.length <= 3) {
@@ -18,14 +18,14 @@ function formatPhoneNumber(input) {
     } else {
         formatted = numbers.slice(0, 3) + '-' + numbers.slice(3, 7) + '-' + numbers.slice(7, 11);
     }
-    
+
     input.value = formatted;
 }
 
 // 전화번호 입력 필드에 이벤트 리스너 추가
 const phoneInput = document.getElementById('phone');
 if (phoneInput) {
-    phoneInput.addEventListener('input', function() {
+    phoneInput.addEventListener('input', function () {
         formatPhoneNumber(this);
     });
 }
@@ -35,27 +35,27 @@ const loginForm = document.getElementById('loginForm');
 if (loginForm) {
     loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        
+
         const formData = new FormData(loginForm);
         const loginData = {
             email: formData.get('email'),
             password: formData.get('password')
         };
-        
+
         try {
             showLoading(true);
-            
+
             const response = await publicApiRequest('/auth/login', {
                 method: 'POST',
                 body: JSON.stringify(loginData)
             });
-            
+
             if (response) {
                 // 토큰 저장
                 TokenManager.setTokens(response.access_token, response.refresh_token);
-                
+
                 showAlert('로그인 성공! 대시보드로 이동합니다.', 'success');
-                
+
                 // 대시보드로 리디렉션
                 setTimeout(() => {
                     window.location.href = '/dashboard';
@@ -75,22 +75,22 @@ const registerForm = document.getElementById('registerForm');
 if (registerForm) {
     registerForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        
+
         const formData = new FormData(registerForm);
-        
+
         // 비밀번호 확인
         if (formData.get('password') !== formData.get('password_confirm')) {
             showAlert('비밀번호가 일치하지 않습니다.', 'error');
             return;
         }
-        
+
         // 비밀번호 길이 검사
         const password = formData.get('password');
         if (password.length < 8) {
             showAlert('비밀번호는 8자 이상이어야 합니다.', 'error');
             return;
         }
-        
+
         // 전화번호가 있으면 형식 검사
         const phone = formData.get('phone');
         if (phone && phone.length > 0) {
@@ -100,7 +100,7 @@ if (registerForm) {
                 return;
             }
         }
-        
+
         const registerData = {
             email: formData.get('email'),
             password: formData.get('password'),
@@ -110,18 +110,18 @@ if (registerForm) {
             role: formData.get('role') || 'owner',
             marketing_consent: formData.get('marketing_consent') ? true : false
         };
-        
+
         try {
             showLoading(true);
-            
+
             const response = await publicApiRequest('/auth/register', {
                 method: 'POST',
                 body: JSON.stringify(registerData)
             });
-            
+
             if (response) {
                 showAlert('회원가입이 완료되었습니다! 로그인 페이지로 이동합니다.', 'success');
-                
+
                 // 로그인 페이지로 리디렉션
                 setTimeout(() => {
                     window.location.href = '/login';
@@ -129,17 +129,17 @@ if (registerForm) {
             }
         } catch (error) {
             console.error('Register error:', error);
-            
+
             // 상세 오류 메시지 처리
             let errorMessage = error.message || '회원가입에 실패했습니다.';
-            
+
             // 422 에러 (Validation Error) 처리
             if (error.message && error.message.includes('422')) {
                 errorMessage = '입력 정보를 확인해주세요.';
             } else if (error.message && error.message.includes('already exists')) {
                 errorMessage = '이미 가입된 이메일입니다.';
             }
-            
+
             showAlert(errorMessage, 'error');
         } finally {
             showLoading(false);
@@ -154,7 +154,7 @@ function showAlert(message, type = 'info') {
     if (existingAlert) {
         existingAlert.remove();
     }
-    
+
     // 타입 매핑
     const typeMapping = {
         'error': 'danger',
@@ -163,9 +163,9 @@ function showAlert(message, type = 'info') {
         'info': 'info',
         'danger': 'danger'
     };
-    
+
     const alertType = typeMapping[type] || 'info';
-    
+
     // 새 알림 생성
     const alert = document.createElement('div');
     alert.className = `alert alert-${alertType} alert-dismissible fade show position-fixed`;
@@ -180,15 +180,15 @@ function showAlert(message, type = 'info') {
         animation: slideInRight 0.4s ease-out;
     `;
     alert.style.whiteSpace = 'pre-line';  // 줄바꿈 유지
-    
+
     alert.innerHTML = `
         ${message}
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     `;
-    
+
     // body에 추가
     document.body.appendChild(alert);
-    
+
     // 자동 제거
     setTimeout(() => {
         if (alert.parentNode) {
@@ -219,7 +219,7 @@ function removeTokens() {
 // API 요청 함수 (reviews.js와 호환성을 위해)
 async function apiRequest(url, options = {}) {
     const token = getToken();
-    
+
     const defaultOptions = {
         method: 'GET',
         headers: {
@@ -227,7 +227,7 @@ async function apiRequest(url, options = {}) {
             ...(token && { 'Authorization': `Bearer ${token}` })
         }
     };
-    
+
     const finalOptions = {
         ...defaultOptions,
         ...options,
@@ -236,12 +236,12 @@ async function apiRequest(url, options = {}) {
             ...options.headers
         }
     };
-    
+
     const response = await fetch('/api' + url, finalOptions);
-    
+
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        
+
         // 401 에러 처리 (토큰 만료)
         if (response.status === 401) {
             removeTokens();
@@ -251,10 +251,10 @@ async function apiRequest(url, options = {}) {
             }, 2000);
             throw new Error('세션이 만료되었습니다.');
         }
-        
+
         throw new Error(errorData.detail || `HTTP ${response.status}`);
     }
-    
+
     return await response.json();
 }
 
@@ -266,7 +266,7 @@ async function publicApiRequest(url, options = {}) {
             'Content-Type': 'application/json'
         }
     };
-    
+
     const finalOptions = {
         ...defaultOptions,
         ...options,
@@ -275,21 +275,21 @@ async function publicApiRequest(url, options = {}) {
             ...options.headers
         }
     };
-    
+
     const response = await fetch('/api' + url, finalOptions);
-    
+
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.detail || `HTTP ${response.status}`);
     }
-    
+
     return await response.json();
 }
 
 // 로그아웃 함수
 function logout() {
     removeTokens();
-    
+
     showAlert('로그아웃되었습니다.', 'info');
     setTimeout(() => {
         window.location.href = '/login';
@@ -302,7 +302,7 @@ async function validateToken() {
     if (!token) {
         return false;
     }
-    
+
     try {
         await apiRequest('/auth/me');
         return true;
@@ -319,7 +319,7 @@ function showLoading(show) {
     if (submitBtn) {
         submitBtn.disabled = show;
         const originalText = submitBtn.getAttribute('data-original-text') || submitBtn.textContent;
-        
+
         if (show) {
             submitBtn.setAttribute('data-original-text', originalText);
             submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 처리 중...';
@@ -330,23 +330,23 @@ function showLoading(show) {
 }
 
 // 페이지 로드시 인증 상태 확인
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     const token = getToken();
     const currentPath = window.location.pathname;
-    
+
     // 로그인이 필요한 페이지들
     const protectedPages = ['/dashboard', '/stores', '/reviews', '/settings'];
-    
+
     // 로그인한 사용자가 접근하면 안 되는 페이지들
     const authPages = ['/login', '/register'];
-    
+
     if (token) {
         // 토큰이 있으면서 로그인/회원가입 페이지에 있는 경우
         if (authPages.includes(currentPath)) {
             window.location.href = '/dashboard';
             return;
         }
-        
+
         // 토큰 유효성 검사 (백그라운드에서)
         validateToken().then(isValid => {
             if (!isValid && protectedPages.includes(currentPath)) {
@@ -365,38 +365,40 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // TokenManager 호환성을 위한 객체 (기존 코드와의 호환성)
 window.TokenManager = {
-    setTokens: function(accessToken, refreshToken) {
+    setTokens: function (accessToken, refreshToken) {
         setToken(accessToken, refreshToken);
     },
-    
-    getAccessToken: function() {
+
+    getAccessToken: function () {
         return getToken();
     },
-    
-    removeTokens: function() {
+
+    removeTokens: function () {
         removeTokens();
     }
 };
 
-// CSS 애니메이션 추가 (알림용)
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideInRight {
-        from {
-            transform: translateX(100%);
-            opacity: 0;
+// CSS 애니메이션 추가 (알림용) - 즉시 실행 함수로 감싸서 스코프 충돌 방지
+(function () {
+    const authStyle = document.createElement('style');
+    authStyle.textContent = `
+        @keyframes slideInRight {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
         }
-        to {
-            transform: translateX(0);
-            opacity: 1;
+        
+        .alert.position-fixed {
+            animation: slideInRight 0.4s ease-out;
         }
-    }
-    
-    .alert.position-fixed {
-        animation: slideInRight 0.4s ease-out;
-    }
-`;
-document.head.appendChild(style);
+    `;
+    document.head.appendChild(authStyle);
+})();
 
 console.log('[Auth] 인증 스크립트 로드됨 - API Base URL:', window.API_CONFIG?.BASE_URL || 'api-config.js를 먼저 로드하세요');
 console.log('[Auth] 답글 등록 기능 호환성 추가됨');

@@ -1,28 +1,76 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}리뷰 자동화 서비스{% endblock %}</title>
-    
-    <!-- Bootstrap CSS -->
+
+    <!-- Bootstrap 5.3.0 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    
+
     <!-- 기본 스타일 -->
     <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}">
-    
+
     <!-- 부트스트랩 아이콘 -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    
+
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
+
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    
+
+    <!-- 모달 z-index 문제 해결을 위한 스타일 -->
+    <style>
+        /* 모달 관련 z-index 수정 */
+        .modal-backdrop {
+            z-index: 1040 !important;
+        }
+
+        .modal {
+            z-index: 1050 !important;
+        }
+
+        .modal-dialog {
+            z-index: 1060 !important;
+        }
+
+        /* 알림 메시지 z-index */
+        .alert.position-fixed {
+            z-index: 9999 !important;
+        }
+
+        /* 로딩 스피너 */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 9998;
+        }
+
+        .loading-overlay.show {
+            display: flex;
+        }
+    </style>
+
     {% block extra_css %}{% endblock %}
 </head>
+
 <body>
+    <!-- 로딩 오버레이 -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner-border text-light" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
     <!-- 네비게이션 바 -->
     <nav class="navbar">
         <div class="container">
@@ -30,7 +78,7 @@
                 <a href="/" class="navbar-brand">
                     <i class="bi bi-chat-dots-fill"></i> 리뷰 자동화
                 </a>
-                
+
                 <div id="navbar-menu">
                     {% if user %}
                     <span class="text-muted">{{ user.name }}님</span>
@@ -46,53 +94,146 @@
             </div>
         </div>
     </nav>
-    
+
     <!-- 메인 컨텐츠 -->
     <main class="container" style="margin-top: 2rem; min-height: calc(100vh - 200px);">
         {% block content %}{% endblock %}
     </main>
-    
+
     <!-- 푸터 -->
     <footer style="background-color: #f8fafc; padding: 2rem 0; margin-top: 3rem; border-top: 1px solid #e2e8f0;">
         <div class="container text-center text-muted">
             <p>&copy; 2024 리뷰 자동화 서비스. All rights reserved.</p>
         </div>
     </footer>
-    
-    <!-- Bootstrap JavaScript -->
+
+    <!-- jQuery (Bootstrap 5는 필요없지만 일부 기능에서 사용할 수 있음) -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+    <!-- Bootstrap 5.3.0 JavaScript Bundle with Popper -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    
+
     <!-- API 설정 먼저 로드 -->
     <script src="{{ url_for('static', path='/js/api-config.js') }}"></script>
-    
+
     <!-- 기본 스크립트 -->
     <script>
-        // 기본 함수들 (호환성 유지)
+        // 전역 로딩 표시 함수
+        function showGlobalLoading() {
+            document.getElementById('loadingOverlay').classList.add('show');
+        }
+
+        function hideGlobalLoading() {
+            document.getElementById('loadingOverlay').classList.remove('show');
+        }
+
+        // 개선된 알림 표시 함수
         function showAlert(message, type = 'info') {
+            // 기존 알림 제거
+            const existingAlerts = document.querySelectorAll('.alert.position-fixed');
+            existingAlerts.forEach(alert => alert.remove());
+
+            // 타입 매핑
+            const typeMap = {
+                'error': 'danger',
+                'warning': 'warning',
+                'success': 'success',
+                'info': 'info',
+                'danger': 'danger'
+            };
+
+            const alertType = typeMap[type] || 'info';
+
+            // 알림 생성
             const alertDiv = document.createElement('div');
-            alertDiv.className = `alert alert-${type}`;
-            alertDiv.textContent = message;
-            
-            const container = document.querySelector('.container');
-            if (container) {
-                container.insertBefore(alertDiv, container.firstChild);
-            }
-            
+            alertDiv.className = `alert alert-${alertType} alert-dismissible fade show position-fixed`;
+            alertDiv.style.cssText = `
+                top: 20px;
+                right: 20px;
+                max-width: 450px;
+                min-width: 300px;
+                box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+                border-radius: 12px;
+                border: none;
+                animation: slideInRight 0.4s ease-out;
+            `;
+
+            // 줄바꿈 지원
+            alertDiv.style.whiteSpace = 'pre-line';
+
+            alertDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            `;
+
+            document.body.appendChild(alertDiv);
+
+            // 자동 제거
             setTimeout(() => {
                 if (alertDiv.parentNode) {
-                    alertDiv.remove();
+                    alertDiv.classList.remove('show');
+                    setTimeout(() => alertDiv.remove(), 150);
                 }
             }, 5000);
         }
-        
+
+        // Bootstrap 모달 초기화 도우미
+        function initModal(modalId) {
+            const modalElement = document.getElementById(modalId);
+            if (modalElement) {
+                // 기존 모달 인스턴스가 있으면 제거
+                const existingModal = bootstrap.Modal.getInstance(modalElement);
+                if (existingModal) {
+                    existingModal.dispose();
+                }
+
+                // 새 모달 인스턴스 생성
+                return new bootstrap.Modal(modalElement, {
+                    backdrop: 'static',
+                    keyboard: true,
+                    focus: true
+                });
+            }
+            return null;
+        }
+
+        // 모달 표시 도우미
+        function showModal(modalId) {
+            const modal = initModal(modalId);
+            if (modal) {
+                modal.show();
+            } else {
+                console.error(`Modal not found: ${modalId}`);
+            }
+        }
+
+        // 모달 숨기기 도우미
+        function hideModal(modalId) {
+            const modalElement = document.getElementById(modalId);
+            if (modalElement) {
+                const modal = bootstrap.Modal.getInstance(modalElement);
+                if (modal) {
+                    modal.hide();
+                }
+            }
+        }
+
         // 페이지 로드시 사용자 상태 확인
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', function () {
+            // Bootstrap 툴팁 초기화
+            const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+            const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+
+            // Bootstrap 팝오버 초기화
+            const popoverTriggerList = document.querySelectorAll('[data-bs-toggle="popover"]');
+            const popoverList = [...popoverTriggerList].map(popoverTriggerEl => new bootstrap.Popover(popoverTriggerEl));
+
+            // 토큰 확인 및 네비게이션 업데이트
             const token = getToken();
             const navbarMenu = document.getElementById('navbar-menu');
-            
+
             if (token && navbarMenu) {
                 // 토큰이 있으면 로그인 상태로 표시
-                // 서버에서 user 정보를 전달하지 않는 경우를 위한 처리
                 if (!navbarMenu.querySelector('.text-muted')) {
                     navbarMenu.innerHTML = `
                         <span class="text-muted">로그인됨</span>
@@ -103,10 +244,84 @@
                     `;
                 }
             }
+
+            // 모달 관련 이벤트 리스너 (디버깅용)
+            document.addEventListener('show.bs.modal', function (event) {
+                console.log('[Modal] 모달 표시 시작:', event.target.id);
+            });
+
+            document.addEventListener('shown.bs.modal', function (event) {
+                console.log('[Modal] 모달 표시 완료:', event.target.id);
+            });
+
+            document.addEventListener('hide.bs.modal', function (event) {
+                console.log('[Modal] 모달 숨기기 시작:', event.target.id);
+            });
+
+            document.addEventListener('hidden.bs.modal', function (event) {
+                console.log('[Modal] 모달 숨기기 완료:', event.target.id);
+            });
+        });
+
+        // CSS 애니메이션 추가 (즉시 실행 함수로 감싸서 스코프 충돌 방지)
+        (function () {
+            const baseStyle = document.createElement('style');
+            baseStyle.textContent = `
+                @keyframes slideInRight {
+                    from {
+                        transform: translateX(100%);
+                        opacity: 0;
+                    }
+                    to {
+                        transform: translateX(0);
+                        opacity: 1;
+                    }
+                }
+                
+                @keyframes fadeIn {
+                    from {
+                        opacity: 0;
+                    }
+                    to {
+                        opacity: 1;
+                    }
+                }
+                
+                .fade-in {
+                    animation: fadeIn 0.3s ease-in;
+                }
+                
+                /* 모달 애니메이션 개선 */
+                .modal.fade .modal-dialog {
+                    transition: transform .3s ease-out;
+                }
+                
+                .modal.show .modal-dialog {
+                    transform: none;
+                }
+            `;
+            document.head.appendChild(baseStyle);
+        })();
+
+        // 전역 에러 핸들러
+        window.addEventListener('error', function (event) {
+            console.error('Global error:', event.error);
+            if (event.error && event.error.message) {
+                if (event.error.message.includes('bootstrap') || event.error.message.includes('modal')) {
+                    console.error('Bootstrap/Modal 관련 오류 발생:', event.error);
+                }
+            }
         });
     </script>
-    
+
+    <!-- 인증 관련 스크립트 -->
+    <script src="{{ url_for('static', path='/js/auth.js') }}"></script>
+
+    <!-- 메인 스크립트 -->
+    <script src="{{ url_for('static', path='/js/main.js') }}"></script>
+
     {% block extra_js %}{% endblock %}
     {% block scripts %}{% endblock %}
 </body>
+
 </html>

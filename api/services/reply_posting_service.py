@@ -8,12 +8,16 @@ import asyncio
 import logging
 import traceback
 import time
+import json
+import sys
+import os
+import threading
+import queue
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 from api.services.supabase_service import SupabaseService
 from api.services.encryption import decrypt_password
-from api.crawlers.baemin_reply_manager import BaeminReplyManager
 
 logger = logging.getLogger(__name__)
 
@@ -193,13 +197,11 @@ class ReplyPostingService:
         """
         try:
             # Supabase에서 리뷰 정보 조회
-            result = await self.supabase.get_review_by_id(review_id)
+            review_data = await self.supabase.get_review_by_id(review_id)
             
-            if not result or not result.get('data'):
+            if not review_data:
                 self.logger.warning(f"리뷰 조회 실패: review_id={review_id}")
                 return None
-            
-            review_data = result['data']
             
             # 필수 필드 확인
             required_fields = ['store_code', 'platform']
@@ -226,28 +228,43 @@ class ReplyPostingService:
             Dict: 매장 설정 정보
         """
         try:
-            # Supabase에서 매장 정보 조회
-            result = await self.supabase.get_store_by_code(store_code)
+            # Supabase에서 매장 정보 조회 - get_store_reply_rules 사용
+            store_data = await self.supabase.get_store_reply_rules(store_code)
             
-            if not result or not result.get('data'):
+            if not store_data:
                 self.logger.warning(f"매장 조회 실패: store_code={store_code}")
                 return None
-            
-            store_data = result['data']
             
             # 필수 필드 확인
             required_fields = ['platform_id', 'platform_pw', 'platform', 'store_name']
             for field in required_fields:
-                if not store_data.get(field):
+                if field not in store_data or not store_data.get(field):
+                    # platform_id, platform_pw는 platform_reply_rules 테이블에 있을 것이므로
+                    # 추가로 조회가 필요할 수 있습니다.
                     self.logger.warning(f"매장 데이터 누락 필드: {field}, store_code={store_code}")
-                    return None
-            
-            # 로그인 비밀번호 복호화
+                    
+            # 로그인 정보 조회를 위해 platform_reply_rules에서 직접 조회
             try:
-                decrypted_password = decrypt_password(store_data['platform_pw'])
-                store_data['platform_pw'] = decrypted_password
+                query = self.supabase.client.table('platform_reply_rules').select('*').eq('store_code', store_code)
+                response = await self.supabase._execute_query(query)
+                
+                if response.data:
+                    platform_data = response.data[0]
+                    store_data['platform_id'] = platform_data.get('platform_id')
+                    store_data['platform_pw'] = platform_data.get('platform_pw')
+                    store_data['platform_code'] = platform_data.get('platform_code')
+                    
+                    # 로그인 비밀번호 복호화
+                    if store_data['platform_pw']:
+                        try:
+                            decrypted_password = decrypt_password(store_data['platform_pw'])
+                            store_data['platform_pw'] = decrypted_password
+                        except Exception as e:
+                            self.logger.error(f"비밀번호 복호화 실패: {e}")
+                            return None
+                
             except Exception as e:
-                self.logger.error(f"비밀번호 복호화 실패: {e}")
+                self.logger.error(f"플랫폼 정보 조회 오류: {e}")
                 return None
             
             self.logger.info(f"매장 설정 조회 성공: store_code={store_code}, platform={store_data.get('platform')}")
@@ -333,71 +350,144 @@ class ReplyPostingService:
         Returns:
             Dict: 등록 결과
         """
-        reply_manager = None
         review_id = review_data.get('review_id', 'unknown')
         
         try:
             self.logger.info(f"배민 답글 등록 시작: review_id={review_id}")
             
-            # BaeminReplyManager 인스턴스 생성
-            reply_manager = BaeminReplyManager(store_config)
+            # threading을 사용한 간단한 해결책
+            import threading
+            import queue
             
-            # 브라우저 설정 및 초기화
-            if not reply_manager.setup_browser(headless=True):
+            result_queue = queue.Queue()
+            
+            def run_browser_task():
+                """별도 스레드에서 실행할 브라우저 작업"""
+                reply_manager = None
+                try:
+                    # 동기 import를 여기서 수행
+                    from api.crawlers.baemin_reply_manager import BaeminReplyManager
+                    
+                    # BaeminReplyManager 인스턴스 생성
+                    reply_manager = BaeminReplyManager(store_config)
+                    
+                    # 브라우저 설정 및 초기화
+                    browser_setup = reply_manager.setup_browser(headless=False)  # 디버깅을 위해 headless=False
+                    if not browser_setup:
+                        result_queue.put({
+                            'success': False,
+                            'error': '브라우저 초기화 실패 - Playwright가 설치되지 않았거나 Chromium이 없습니다',
+                            'review_id': review_id,
+                            'platform': 'baemin',
+                            'error_details': {
+                                'message': 'playwright install chromium 명령을 실행해주세요'
+                            }
+                        })
+                        return
+                    
+                    # 로그인
+                    login_success, login_message = reply_manager.login_to_platform()
+                    if not login_success:
+                        result_queue.put({
+                            'success': False,
+                            'error': f'로그인 실패: {login_message}',
+                            'review_id': review_id,
+                            'platform': 'baemin'
+                        })
+                        return
+                    
+                    # 리뷰 관리 페이지로 이동
+                    nav_success, nav_message = reply_manager.navigate_to_reviews_page()
+                    if not nav_success:
+                        result_queue.put({
+                            'success': False,
+                            'error': f'리뷰 페이지 이동 실패: {nav_message}',
+                            'review_id': review_id,
+                            'platform': 'baemin'
+                        })
+                        return
+                    
+                    # 답글 등록 수행
+                    reply_result = reply_manager.manage_reply(
+                        review_id=review_id,
+                        reply_text=reply_content,
+                        action="auto"
+                    )
+                    
+                    if reply_result['success']:
+                        result_queue.put({
+                            'success': True,
+                            'review_id': review_id,
+                            'platform': 'baemin',
+                            'store_name': store_config.get('store_name', ''),
+                            'final_status': 'posted',
+                            'action_taken': reply_result.get('action_taken', 'posted'),
+                            'message': reply_result.get('message', '답글 등록 성공')
+                        })
+                    else:
+                        result_queue.put({
+                            'success': False,
+                            'error': reply_result.get('message', '답글 등록 실패'),
+                            'review_id': review_id,
+                            'platform': 'baemin',
+                            'error_details': reply_result
+                        })
+                        
+                except Exception as e:
+                    result_queue.put({
+                        'success': False,
+                        'error': f'브라우저 작업 중 오류: {str(e)}',
+                        'review_id': review_id,
+                        'platform': 'baemin',
+                        'error_details': {
+                            'exception': str(e),
+                            'type': type(e).__name__
+                        }
+                    })
+                finally:
+                    # 브라우저 정리
+                    if reply_manager:
+                        try:
+                            reply_manager.close_browser()
+                        except:
+                            pass
+            
+            # 스레드 시작
+            thread = threading.Thread(target=run_browser_task)
+            thread.start()
+            
+            # 스레드 완료 대기 (타임아웃 설정)
+            thread.join(timeout=self.PROCESSING_TIMEOUT)
+            
+            if thread.is_alive():
+                # 타임아웃 발생
+                self.logger.error("브라우저 작업 타임아웃")
                 return {
                     'success': False,
-                    'error': '브라우저 초기화 실패',
+                    'error': '브라우저 작업 타임아웃',
                     'review_id': review_id,
                     'platform': 'baemin'
                 }
             
-            # 로그인
-            login_success, login_message = reply_manager.login_to_platform()
-            if not login_success:
-                return {
+            # 결과 가져오기
+            try:
+                result = result_queue.get_nowait()
+            except queue.Empty:
+                result = {
                     'success': False,
-                    'error': f'로그인 실패: {login_message}',
+                    'error': '결과를 가져올 수 없습니다',
                     'review_id': review_id,
                     'platform': 'baemin'
                 }
             
-            # 리뷰 관리 페이지로 이동
-            nav_success, nav_message = reply_manager.navigate_to_reviews_page()
-            if not nav_success:
-                return {
-                    'success': False,
-                    'error': f'리뷰 페이지 이동 실패: {nav_message}',
-                    'review_id': review_id,
-                    'platform': 'baemin'
-                }
-            
-            # 답글 등록 수행
-            reply_result = reply_manager.manage_reply(
-                review_id=review_id,
-                reply_text=reply_content,
-                action="auto"
-            )
-            
-            if reply_result['success']:
-                self.logger.info(f"배민 답글 등록 성공: review_id={review_id}, action={reply_result.get('action_taken')}")
-                return {
-                    'success': True,
-                    'review_id': review_id,
-                    'platform': 'baemin',
-                    'store_name': store_config.get('store_name', ''),
-                    'final_status': 'posted',
-                    'action_taken': reply_result.get('action_taken', 'posted'),
-                    'message': reply_result.get('message', '답글 등록 성공')
-                }
+            # 로깅
+            if result['success']:
+                self.logger.info(f"배민 답글 등록 성공: review_id={review_id}, action={result.get('action_taken')}")
             else:
-                return {
-                    'success': False,
-                    'error': reply_result.get('message', '답글 등록 실패'),
-                    'review_id': review_id,
-                    'platform': 'baemin',
-                    'error_details': reply_result
-                }
-                
+                self.logger.warning(f"배민 답글 등록 실패: review_id={review_id}, error={result.get('error')}")
+            
+            return result
+            
         except Exception as e:
             error_msg = f"배민 답글 등록 중 예외: {str(e)}"
             self.logger.error(f"{error_msg}\n{traceback.format_exc()}")
@@ -405,16 +495,13 @@ class ReplyPostingService:
                 'success': False,
                 'error': error_msg,
                 'review_id': review_id,
-                'platform': 'baemin'
+                'platform': 'baemin',
+                'error_details': {
+                    'exception': str(e),
+                    'traceback': traceback.format_exc()
+                }
             }
-        finally:
-            # 브라우저 정리
-            if reply_manager:
-                try:
-                    reply_manager.close_browser()
-                except:
-                    pass
-
+            
     async def _update_reply_status(
         self,
         review_id: str,
@@ -430,20 +517,17 @@ class ReplyPostingService:
             user_code: 사용자 코드
         """
         try:
-            update_data = {
-                'response_status': posting_result.get('final_status', 'failed' if not posting_result['success'] else 'posted'),
-                'response_at': datetime.now().isoformat() if posting_result['success'] else None,
-                'response_by': user_code,
-                'error_message': posting_result.get('error') if not posting_result['success'] else None,
-                'updated_at': datetime.now().isoformat()
-            }
+            status = posting_result.get('final_status', 'failed' if not posting_result['success'] else 'posted')
             
-            # 성공시 final_response 업데이트
-            if posting_result['success'] and 'reply_content' in posting_result:
-                update_data['final_response'] = posting_result['reply_content']
+            await self.supabase.update_review_response(
+                review_id,
+                response_status=status,
+                response_by=user_code,
+                error_message=posting_result.get('error') if not posting_result['success'] else None,
+                response_method='manual' if posting_result['success'] else None
+            )
             
-            await self.supabase.update_review_status(review_id, update_data)
-            self.logger.info(f"리뷰 상태 업데이트 완료: review_id={review_id}, status={update_data['response_status']}")
+            self.logger.info(f"리뷰 상태 업데이트 완료: review_id={review_id}, status={status}")
             
         except Exception as e:
             self.logger.error(f"리뷰 상태 업데이트 실패: review_id={review_id}, error={e}")

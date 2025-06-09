@@ -12,6 +12,9 @@ import asyncio
 
 from playwright.async_api import async_playwright, Page
 from .windows_async_crawler import WindowsAsyncBaseCrawler
+from api.crawlers.review_parsers.baemin_review_parser import BaeminReviewParser
+# baemin_sync_review_crawler.py 상단에 추가
+from api.utils.date_parser import parse_relative_date
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +30,6 @@ class BaeminReviewCrawler(WindowsAsyncBaseCrawler):
         # 스크린샷 저장 경로
         self.screenshot_dir = Path("C:/Review_playwright/logs/screenshots/baemin_reviews")
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
-    
-    async def start(self):
-        """브라우저 시작"""
-        await self.start_browser()
-    
-    async def close(self):
-        """브라우저 종료"""
-        await self.close_browser()
         
     async def login(self, username: str, password: str) -> bool:
         """배민 사장님 사이트 로그인"""
@@ -193,18 +188,6 @@ class BaeminReviewCrawler(WindowsAsyncBaseCrawler):
         except Exception as e:
             logger.error(f"리뷰 요소 찾기 실패: {str(e)}")
             return None
-    
-    async def get_store_list(self) -> List[Dict[str, Any]]:
-        """매장 목록 가져오기 (리뷰 크롤러에서는 사용하지 않음)"""
-        return []
-    
-    async def select_store(self, platform_code: str) -> bool:
-        """매장 선택 (리뷰 크롤러에서는 사용하지 않음)"""
-        return True
-    
-    async def get_store_info(self) -> Dict[str, Any]:
-        """현재 선택된 매장 정보 가져오기 (리뷰 크롤러에서는 사용하지 않음)"""
-        return {}
     
     async def post_reply(self, review_data: Dict[str, Any], reply_text: str) -> bool:
         """리뷰에 답글 작성"""

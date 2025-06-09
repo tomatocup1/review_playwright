@@ -10,7 +10,7 @@ let currentReviewForPosting = null;
 let currentReplyContent = null;
 
 // 페이지 로드시 초기화
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     console.log('[ReviewsReplyPosting] DOM 로드 완료 - 답글 등록 기능 초기화');
     initializeReplyPostingFeatures();
 });
@@ -23,12 +23,12 @@ function initializeReplyPostingFeatures() {
     if (!document.getElementById('postReplyModal')) {
         addReplyPostingModal();
     }
-    
+
     // 일괄 등록 버튼이 존재하지 않으면 추가
     if (!document.getElementById('batchActionsSection')) {
         addBatchActionsSection();
     }
-    
+
     // 이벤트 리스너 설정
     setupReplyPostingEventListeners();
 }
@@ -104,7 +104,7 @@ function addReplyPostingModal() {
         </div>
     </div>
     `;
-    
+
     document.body.insertAdjacentHTML('beforeend', modalHtml);
 }
 
@@ -114,7 +114,7 @@ function addReplyPostingModal() {
 function addBatchActionsSection() {
     const existingFilterSection = document.querySelector('.filter-section');
     if (!existingFilterSection) return;
-    
+
     const batchSectionHtml = `
     <div id="batchActionsSection" class="batch-actions" style="display: none;">
         <h6><i class="bi bi-lightning"></i> 일괄 처리</h6>
@@ -132,7 +132,7 @@ function addBatchActionsSection() {
         <small class="text-muted">※ 일괄 등록은 백그라운드에서 처리되며, 완료 후 알림으로 결과를 확인할 수 있습니다.</small>
     </div>
     `;
-    
+
     existingFilterSection.insertAdjacentHTML('afterend', batchSectionHtml);
 }
 
@@ -141,14 +141,14 @@ function addBatchActionsSection() {
  */
 function setupReplyPostingEventListeners() {
     // 답글 등록 확인 버튼
-    document.addEventListener('click', function(e) {
+    document.addEventListener('click', function (e) {
         if (e.target && e.target.id === 'confirmPostReplyBtn') {
             handleConfirmPostReply();
         }
     });
-    
+
     // 일괄 등록 버튼들
-    document.addEventListener('click', function(e) {
+    document.addEventListener('click', function (e) {
         if (e.target && e.target.id === 'batchPostAll') {
             handleBatchPostAll();
         } else if (e.target && e.target.id === 'batchPostGenerated') {
@@ -166,7 +166,7 @@ function addReplyPostingButtons(reviewsHtml, reviews) {
     return reviews.map(review => {
         // 기존 AI 컨트롤 섹션 수정
         let replyPostingControls = '';
-        
+
         if (review.response_status === 'generated' || review.response_status === 'ready_to_post') {
             replyPostingControls = `
                 <button class="btn btn-success btn-sm post-reply-btn" 
@@ -191,7 +191,7 @@ function addReplyPostingButtons(reviewsHtml, reviews) {
                 </button>
             `;
         }
-        
+
         return replyPostingControls;
     });
 }
@@ -206,10 +206,10 @@ function handlePostReplyClick(button) {
         storeName: button.dataset.storeName,
         platform: button.dataset.platform
     };
-    
+
     // 모달에 정보 표시
     populateReplyPostingModal(button);
-    
+
     // 모달 표시
     const modal = new bootstrap.Modal(document.getElementById('postReplyModal'));
     modal.show();
@@ -220,24 +220,24 @@ function handlePostReplyClick(button) {
  */
 async function populateReplyPostingModal(button) {
     const reviewId = button.dataset.reviewId;
-    
+
     try {
-        // 리뷰 상세 정보 가져오기
-        const reviewInfo = await apiRequest(`/test-reply-posting/${reviewId}/info`);
-        
+        // 리뷰 상세 정보 가져오기 - 수정된 부분
+        const reviewInfo = await apiRequest(`/reviews/${reviewId}`);
+
         // 모달 내용 업데이트
         document.getElementById('modalReviewContent').innerHTML = escapeHtml(reviewInfo.review_content || '');
         document.getElementById('modalReviewAuthor').textContent = reviewInfo.review_name || '익명';
-        document.getElementById('modalReviewRating').textContent = '★'.repeat(reviewInfo.rating || 0) + '☆'.repeat(5-(reviewInfo.rating || 0));
+        document.getElementById('modalReviewRating').textContent = '★'.repeat(reviewInfo.rating || 0) + '☆'.repeat(5 - (reviewInfo.rating || 0));
         document.getElementById('modalReviewDate').textContent = formatDate(reviewInfo.review_date);
-        
+
         document.getElementById('modalReplyContent').innerHTML = escapeHtml(button.dataset.replyContent);
         document.getElementById('modalReplyType').textContent = getReplyTypeText(reviewInfo.response_method || 'ai_auto');
         document.getElementById('modalReplyLength').textContent = (button.dataset.replyContent || '').length;
-        
+
         document.getElementById('modalStoreName').textContent = button.dataset.storeName;
         document.getElementById('modalPlatform').textContent = getPlatformText(button.dataset.platform);
-        
+
     } catch (error) {
         console.error('리뷰 정보 로드 실패:', error);
         showAlert('리뷰 정보를 불러오는데 실패했습니다: ' + error.message, 'danger');
@@ -252,16 +252,17 @@ async function handleConfirmPostReply() {
         showAlert('오류: 등록할 답글 정보가 없습니다.', 'danger');
         return;
     }
-    
+
     const confirmBtn = document.getElementById('confirmPostReplyBtn');
     const originalText = confirmBtn.innerHTML;
-    
+
     try {
         confirmBtn.disabled = true;
         confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 등록 중...';
-        
+
         addDebugInfo(`답글 등록 시작: ${currentReviewForPosting.reviewId}`);
-        
+
+        // 수정된 부분 - /test-reply-posting/ 제거
         const response = await fetch(`/api/reply-posting/${currentReviewForPosting.reviewId}/submit`, {
             method: 'POST',
             headers: {
@@ -273,26 +274,26 @@ async function handleConfirmPostReply() {
                 auto_submit: true
             })
         });
-        
+
         const result = await response.json();
         addDebugInfo(`답글 등록 응답: ${JSON.stringify(result)}`);
-        
+
         if (response.ok && result.success) {
             showAlert('답글이 성공적으로 등록되었습니다! 🎉', 'success');
-            
+
             // 모달 닫기
             const modal = bootstrap.Modal.getInstance(document.getElementById('postReplyModal'));
             modal.hide();
-            
+
             // 리뷰 목록 새로고침
             setTimeout(() => {
                 loadReviews();
             }, 1500);
-            
+
         } else {
             throw new Error(result.detail || result.message || '답글 등록에 실패했습니다.');
         }
-        
+
     } catch (error) {
         console.error('답글 등록 오류:', error);
         addDebugInfo(`답글 등록 실패: ${error.message}`);
@@ -311,11 +312,11 @@ async function handleBatchPostAll() {
         showAlert('매장을 먼저 선택해주세요.', 'warning');
         return;
     }
-    
+
     if (!confirm('이 매장의 모든 대기 중인 답글을 등록하시겠습니까?\n\n※ 실제 플랫폼에 답글이 게시됩니다.')) {
         return;
     }
-    
+
     await performBatchPosting('all', '모든 답글');
 }
 
@@ -327,11 +328,11 @@ async function handleBatchPostGenerated() {
         showAlert('매장을 먼저 선택해주세요.', 'warning');
         return;
     }
-    
+
     if (!confirm('이 매장의 AI 생성된 답글을 모두 등록하시겠습니까?')) {
         return;
     }
-    
+
     await performBatchPosting('generated', 'AI 생성된 답글');
 }
 
@@ -343,11 +344,11 @@ async function handleBatchPostReady() {
         showAlert('매장을 먼저 선택해주세요.', 'warning');
         return;
     }
-    
+
     if (!confirm('이 매장의 등록 준비된 답글을 모두 등록하시겠습니까?')) {
         return;
     }
-    
+
     await performBatchPosting('ready_to_post', '등록 준비된 답글');
 }
 
@@ -357,13 +358,13 @@ async function handleBatchPostReady() {
 async function performBatchPosting(type, description) {
     const button = event.target;
     const originalText = button.innerHTML;
-    
+
     try {
         button.disabled = true;
         button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 일괄 등록 중...';
-        
+
         addDebugInfo(`일괄 등록 시작: ${type} - ${currentStoreCode}`);
-        
+
         const filters = {};
         if (type === 'generated') {
             filters.status = ['generated'];
@@ -372,7 +373,7 @@ async function performBatchPosting(type, description) {
         } else {
             filters.status = ['generated', 'ready_to_post'];
         }
-        
+
         const response = await fetch(`/api/reply-posting/batch/${currentStoreCode}/submit`, {
             method: 'POST',
             headers: {
@@ -384,26 +385,26 @@ async function performBatchPosting(type, description) {
                 auto_submit: true
             })
         });
-        
+
         const result = await response.json();
         addDebugInfo(`일괄 등록 응답: ${JSON.stringify(result)}`);
-        
+
         if (response.ok && result.success) {
             const message = `${description} ${result.posted_count}개가 성공적으로 등록되었습니다! 🎉
             ${result.failed_count > 0 ? `\n실패: ${result.failed_count}개` : ''}`;
-            
+
             showAlert(message, 'success');
-            
+
             // 리뷰 목록 새로고침
             setTimeout(() => {
                 loadReviews();
                 loadStats();
             }, 2000);
-            
+
         } else {
             throw new Error(result.detail || result.message || '일괄 등록에 실패했습니다.');
         }
-        
+
     } catch (error) {
         console.error('일괄 등록 오류:', error);
         addDebugInfo(`일괄 등록 실패: ${error.message}`);
@@ -457,11 +458,11 @@ function getPlatformText(platform) {
 // 기존 onStoreChange 함수 확장 (전역 범위에서 접근 가능하도록)
 if (typeof window.originalOnStoreChange === 'undefined') {
     window.originalOnStoreChange = onStoreChange;
-    
-    window.onStoreChange = async function() {
+
+    window.onStoreChange = async function () {
         // 기존 로직 실행
         await window.originalOnStoreChange();
-        
+
         // 일괄 처리 섹션 토글
         toggleBatchActionsSection(currentStoreCode);
     };
@@ -470,21 +471,21 @@ if (typeof window.originalOnStoreChange === 'undefined') {
 // 기존 displayReviews 함수 확장
 if (typeof window.originalDisplayReviews === 'undefined') {
     window.originalDisplayReviews = displayReviews;
-    
-    window.displayReviews = function(reviews) {
+
+    window.displayReviews = function (reviews) {
         // 기존 로직 실행
         window.originalDisplayReviews(reviews);
-        
+
         // 답글 등록 버튼 이벤트 리스너 추가
         document.querySelectorAll('.post-reply-btn').forEach(button => {
-            button.addEventListener('click', function() {
+            button.addEventListener('click', function () {
                 handlePostReplyClick(this);
             });
         });
-        
+
         // 재시도 버튼 이벤트 리스너 추가
         document.querySelectorAll('.retry-reply-btn').forEach(button => {
-            button.addEventListener('click', function() {
+            button.addEventListener('click', function () {
                 handleRetryReply(this.dataset.reviewId);
             });
         });
@@ -503,9 +504,9 @@ async function handleRetryReply(reviewId) {
                 'Content-Type': 'application/json'
             }
         });
-        
+
         const result = await response.json();
-        
+
         if (response.ok && result.success) {
             showAlert('답글 재시도가 시작되었습니다.', 'info');
             setTimeout(() => {
@@ -514,7 +515,7 @@ async function handleRetryReply(reviewId) {
         } else {
             throw new Error(result.detail || '재시도 실패');
         }
-        
+
     } catch (error) {
         console.error('답글 재시도 오류:', error);
         showAlert(`답글 재시도 실패: ${error.message}`, 'danger');

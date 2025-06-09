@@ -425,3 +425,74 @@ class SupabaseService:
         except Exception as e:
             logger.error(f"답글 생성 이력 저장 오류: {e}")
             return False
+
+    async def get_reply_generation_history(self, review_id: str) -> List[Dict[str, Any]]:
+        """답글 생성 이력 조회"""
+        try:
+            response = await self._execute_query(
+                self.client.table('reply_generation_history')
+                .select('*')
+                .eq('review_id', review_id)
+                .order('created_at', desc=True)
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"답글 생성 이력 조회 오류: {e}")
+            return []
+
+    async def update_review_response(
+        self,
+        review_id: str,
+        response_status: str = None,
+        final_response: str = None,
+        ai_response: str = None,
+        manual_response: str = None,
+        retry_count: int = None,
+        error_message: str = None,
+        response_by: str = None,
+        response_method: str = None
+    ) -> bool:
+        """리뷰 답글 정보 업데이트"""
+        try:
+            update_data = {
+                'updated_at': datetime.now().isoformat()
+            }
+            
+            if response_status is not None:
+                update_data['response_status'] = response_status
+                
+            if final_response is not None:
+                update_data['final_response'] = final_response
+                
+            if ai_response is not None:
+                update_data['ai_response'] = ai_response
+                
+            if manual_response is not None:
+                update_data['manual_response'] = manual_response
+                
+            if retry_count is not None:
+                update_data['retry_count'] = retry_count
+                
+            if error_message is not None:
+                update_data['error_message'] = error_message
+                
+            if response_by is not None:
+                update_data['response_by'] = response_by
+                
+            if response_method is not None:
+                update_data['response_method'] = response_method
+                
+            if response_status == 'posted':
+                update_data['response_at'] = datetime.now().isoformat()
+            
+            response = await self._execute_query(
+                self.client.table('reviews')
+                .update(update_data)
+                .eq('review_id', review_id)
+            )
+            
+            return bool(response.data)
+            
+        except Exception as e:
+            logger.error(f"리뷰 답글 업데이트 오류: {e}")
+            return False

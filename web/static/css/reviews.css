@@ -57,6 +57,19 @@
     color: white;
 }
 
+/* 모달 z-index 문제 해결 */
+.modal-backdrop {
+    z-index: 1040 !important;
+}
+
+.modal {
+    z-index: 1050 !important;
+}
+
+.modal-dialog {
+    z-index: 1060 !important;
+}
+
 /* 리뷰 카드 액션 영역 */
 .review-actions {
     margin-top: 15px;

@@ -9,6 +9,8 @@ from typing import Dict, Optional, Tuple, Any
 from playwright.sync_api import sync_playwright, Browser, Page
 import time
 import traceback
+import sys
+from api.utils.playwright_helper import setup_playwright_env, get_chromium_executable
 
 class BaseReplyManager(ABC):
     """
@@ -62,11 +64,8 @@ class BaseReplyManager(ABC):
             bool: 성공 여부
         """
         try:
-            # Playwright 브라우저 경로 설정
-            playwright_path = os.path.expanduser("~") + r"\AppData\Local\ms-playwright"
-            if os.path.exists(playwright_path):
-                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = playwright_path
-                self.logger.info(f"Playwright browsers path set to: {playwright_path}")
+            # Playwright 환경 설정
+            setup_playwright_env()
             
             self.playwright = sync_playwright().start()
             
@@ -87,13 +86,19 @@ class BaseReplyManager(ABC):
                 self.browser = self.playwright.chromium.launch(**launch_options)
             except Exception as e:
                 self.logger.warning(f"Chromium launch failed: {e}")
-                # 브라우저 경로를 직접 지정해서 재시도
-                chromium_path = os.path.join(playwright_path, "chromium-1091", "chrome-win", "chrome.exe")
-                if os.path.exists(chromium_path):
-                    launch_options["executable_path"] = chromium_path
+                
+                # 실행 파일 경로 직접 지정
+                chrome_path = get_chromium_executable()
+                if chrome_path and os.path.exists(chrome_path):
+                    launch_options["executable_path"] = chrome_path
+                    self.logger.info(f"Using chromium at: {chrome_path}")
                     self.browser = self.playwright.chromium.launch(**launch_options)
                 else:
-                    raise Exception("Chromium browser not found")
+                    # 마지막 시도: 기본 경로로 시도
+                    self.logger.warning("Chromium not found, trying default installation...")
+                    import subprocess
+                    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+                    self.browser = self.playwright.chromium.launch(**launch_options)
             
             context = self.browser.new_context(
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
