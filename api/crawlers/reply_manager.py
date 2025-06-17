@@ -53,7 +53,7 @@ class BaseReplyManager(ABC):
             self.logger.addHandler(handler)
             self.logger.setLevel(logging.INFO)
     
-    def setup_browser(self, headless: bool = True) -> bool:
+    def setup_browser(self, headless: bool = False) -> bool:
         """
         브라우저 설정 및 초기화
         
@@ -64,6 +64,11 @@ class BaseReplyManager(ABC):
             bool: 성공 여부
         """
         try:
+            # Windows에서 asyncio 이벤트 루프 정책 설정
+            if sys.platform == 'win32':
+                import asyncio
+                asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+            
             # Playwright 환경 설정
             setup_playwright_env()
             
@@ -72,12 +77,14 @@ class BaseReplyManager(ABC):
             # 브라우저 실행 옵션
             launch_options = {
                 "headless": headless,
+                "slow_mo": 1000 if not headless else 0,  # 비헤드리스 모드에서 느리게 실행
                 "args": [
                     '--no-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-blink-features=AutomationControlled',
                     '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process'
+                    '--disable-features=IsolateOrigins,site-per-process',
+                    '--lang=ko-KR'  # 한국어 설정 추가
                 ]
             }
             

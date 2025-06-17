@@ -8,6 +8,8 @@ console.log('[ReviewsReplyPosting] 답글 등록 스크립트 로드됨');
 // 전역 변수
 let currentReviewForPosting = null;
 let currentReplyContent = null;
+let processingReviews = new Set(); // 처리 중인 리뷰 ID 저장
+let isPostingInProgress = false; // 전역 처리 중 플래그 추가
 
 // 페이지 로드시 초기화
 document.addEventListener('DOMContentLoaded', function () {
@@ -31,6 +33,19 @@ function initializeReplyPostingFeatures() {
 
     // 이벤트 리스너 설정
     setupReplyPostingEventListeners();
+
+    // 처리 중 버튼 스타일 추가
+    const style = document.createElement('style');
+    style.textContent = `
+        .post-reply-btn.processing {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .post-reply-btn.processing:hover {
+            opacity: 0.6;
+        }
+    `;
+    document.head.appendChild(style);
 }
 
 /**
@@ -157,6 +172,18 @@ function setupReplyPostingEventListeners() {
             handleBatchPostReady();
         }
     });
+
+    // 모달 이벤트 리스너 추가
+    const postReplyModal = document.getElementById('postReplyModal');
+    if (postReplyModal) {
+        postReplyModal.addEventListener('hidden.bs.modal', function () {
+            // 모달이 닫힐 때 처리 중 상태 초기화
+            if (currentReviewForPosting) {
+                processingReviews.delete(currentReviewForPosting.reviewId);
+                isPostingInProgress = false;
+            }
+        });
+    }
 }
 
 /**
@@ -200,19 +227,63 @@ function addReplyPostingButtons(reviewsHtml, reviews) {
  * 답글 등록 버튼 클릭 처리
  */
 function handlePostReplyClick(button) {
+    const reviewId = button.dataset.reviewId;
+
+    // 전역 처리 중 체크
+    if (isPostingInProgress) {
+        console.log('다른 답글 등록이 진행 중입니다.');
+        showAlert('다른 답글 등록이 진행 중입니다. 잠시 후 다시 시도해주세요.', 'warning');
+        return;
+    }
+
+    // 이미 처리 중인지 확인
+    if (processingReviews.has(reviewId)) {
+        showAlert('이미 답글 등록이 진행 중입니다.', 'warning');
+        return;
+    }
+
+    // 중복 클릭 방지
+    if (button.disabled || button.classList.contains('processing')) {
+        return;
+    }
+
+    // 처리 시작 표시
+    isPostingInProgress = true;
+    processingReviews.add(reviewId);
+
+    // 버튼 비활성화
+    button.disabled = true;
+    button.classList.add('processing');
+    button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 처리중...';
+
     currentReviewForPosting = {
-        reviewId: button.dataset.reviewId,
+        reviewId: reviewId,
         replyContent: button.dataset.replyContent,
         storeName: button.dataset.storeName,
         platform: button.dataset.platform
     };
 
     // 모달에 정보 표시
-    populateReplyPostingModal(button);
+    populateReplyPostingModal(button).then(() => {
+        // 모달 표시
+        const modal = new bootstrap.Modal(document.getElementById('postReplyModal'));
+        modal.show();
 
-    // 모달 표시
-    const modal = new bootstrap.Modal(document.getElementById('postReplyModal'));
-    modal.show();
+        // 버튼 원상복구
+        button.disabled = false;
+        button.classList.remove('processing');
+        button.innerHTML = '<i class="bi bi-send"></i> 답글 등록';
+        isPostingInProgress = false;
+    }).catch(error => {
+        // 에러 시에도 원상복구
+        button.disabled = false;
+        button.classList.remove('processing');
+        button.innerHTML = '<i class="bi bi-send"></i> 답글 등록';
+        processingReviews.delete(reviewId);
+        isPostingInProgress = false;
+        console.error('모달 정보 로드 실패:', error);
+        showAlert('리뷰 정보를 불러오는데 실패했습니다.', 'danger');
+    });
 }
 
 /**
@@ -253,17 +324,34 @@ async function handleConfirmPostReply() {
         return;
     }
 
+    const reviewId = currentReviewForPosting.reviewId;
+
+    // 이미 처리 중인지 확인
+    if (processingReviews.has(reviewId)) {
+        console.log('이미 답글 등록 중입니다:', reviewId);
+        showAlert('이미 답글 등록이 진행 중입니다.', 'warning');
+        return;
+    }
+
     const confirmBtn = document.getElementById('confirmPostReplyBtn');
     const originalText = confirmBtn.innerHTML;
 
+    // 처리 중 플래그 설정
+    isPostingInProgress = true;
+
     try {
+        // 처리 중 표시
+        processingReviews.add(reviewId);
         confirmBtn.disabled = true;
         confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 등록 중...';
 
-        addDebugInfo(`답글 등록 시작: ${currentReviewForPosting.reviewId}`);
+        // 모달의 닫기 버튼도 비활성화
+        const modalCloseButtons = document.querySelectorAll('#postReplyModal .btn-close, #postReplyModal .btn-secondary');
+        modalCloseButtons.forEach(btn => btn.disabled = true);
 
-        // 수정된 부분 - /test-reply-posting/ 제거
-        const response = await fetch(`/api/reply-posting/${currentReviewForPosting.reviewId}/submit`, {
+        addDebugInfo(`답글 등록 시작: ${reviewId}`);
+
+        const response = await fetch(`/api/reply-posting/${reviewId}/submit`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -279,7 +367,12 @@ async function handleConfirmPostReply() {
         addDebugInfo(`답글 등록 응답: ${JSON.stringify(result)}`);
 
         if (response.ok && result.success) {
-            showAlert('답글이 성공적으로 등록되었습니다! 🎉', 'success');
+            // 이미 등록된 경우도 성공으로 처리
+            if (result.status === 'already_posted') {
+                showAlert('이미 답글이 등록되어 있습니다.', 'info');
+            } else {
+                showAlert('답글이 성공적으로 등록되었습니다! 🎉', 'success');
+            }
 
             // 모달 닫기
             const modal = bootstrap.Modal.getInstance(document.getElementById('postReplyModal'));
@@ -291,7 +384,19 @@ async function handleConfirmPostReply() {
             }, 1500);
 
         } else {
-            throw new Error(result.detail || result.message || '답글 등록에 실패했습니다.');
+            // 이미 등록된 경우 처리
+            if (result.status === 'already_posted' || result.message?.includes('이미 답글이 등록')) {
+                showAlert('이미 답글이 등록되어 있습니다.', 'info');
+                // 모달 닫기
+                const modal = bootstrap.Modal.getInstance(document.getElementById('postReplyModal'));
+                modal.hide();
+                // 리뷰 목록 새로고침
+                setTimeout(() => {
+                    loadReviews();
+                }, 1500);
+            } else {
+                throw new Error(result.detail || result.message || '답글 등록에 실패했습니다.');
+            }
         }
 
     } catch (error) {
@@ -299,8 +404,17 @@ async function handleConfirmPostReply() {
         addDebugInfo(`답글 등록 실패: ${error.message}`);
         showAlert(`답글 등록 실패: ${error.message}`, 'danger');
     } finally {
+        // 처리 완료 표시
+        processingReviews.delete(reviewId);
+        isPostingInProgress = false;
+
+        // 버튼 상태 원상복구
         confirmBtn.disabled = false;
         confirmBtn.innerHTML = originalText;
+
+        // 모달 버튼들도 활성화
+        const modalCloseButtons = document.querySelectorAll('#postReplyModal .btn-close, #postReplyModal .btn-secondary');
+        modalCloseButtons.forEach(btn => btn.disabled = false);
     }
 }
 

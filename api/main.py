@@ -1,5 +1,5 @@
 """
-리뷰 ?�동??SaaS ?�비??- FastAPI 백엔??- Step 4 API ?�드?�인??추�?
+리뷰 자동화 SaaS 서비스 - FastAPI 백엔드 - Step 4 API 엔드포인트 추가
 """
 import os
 import sys
@@ -11,20 +11,21 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from api.routes import reply_posting
 from contextlib import asynccontextmanager
 import logging
 import nest_asyncio
 import traceback
 
-# Windows ?�용 ?�정
+# Windows 전용 설정 - Playwright subprocess 지원을 위해 ProactorEventLoop 사용
 if sys.platform == 'win32':
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())  # Playwright subprocess ����
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 nest_asyncio.apply()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# 로그 ?�정
+# 로그 설정
 log_dir = os.path.join(BASE_DIR, 'logs')
 os.makedirs(log_dir, exist_ok=True)
 
@@ -41,21 +42,21 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("리뷰 ?�동???�비???�작...")
+    logger.info("리뷰 자동화 서비스 시작...")
     yield
-    logger.info("리뷰 ?�동???�비??종료...")
+    logger.info("리뷰 자동화 서비스 종료...")
 
 app = FastAPI(
-    title="리뷰 ?�동??API",
-    description="배�?, ?�기?? 쿠팡?�츠 리뷰 ?�동 ?��? ?�비??,
+    title="리뷰 자동화 API",
+    description="배민, 요기요, 쿠팡이츠 리뷰 자동 답글 서비스",
     version="1.0.0",
     lifespan=lifespan
 )
 
-# CORS ?�정 ?�정
+# CORS 설정 수정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 개발??- 모든 출처 ?�용
+    allow_origins=["*"],  # 개발용 - 모든 출처 허용
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,36 +79,40 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "web" / "templates"))
 
-# 기존 ?�우???�포??from api.routes import auth, pages, stores, reviews
+# 기존 라우터 임포트
+from api.routes import auth, pages, stores, reviews
 
-# Step 4: ?�로???��? ?�록 관???�우???�포??from api.routes import reply_posting_endpoints, reply_status
+# Step 4: 새로운 답글 등록 관련 라우터 임포트
+from api.routes import reply_posting_endpoints, reply_status
 
-# ?�스?�용 ?�우???�포??from api.routes import test_reply_posting
+# 테스트용 라우터 임포트
+from api.routes import test_reply_posting
 
-# 기존 ?�우???�록
+# 기존 라우터 등록
 app.include_router(auth.router)
 app.include_router(stores.router)
 app.include_router(pages.router)
 app.include_router(reviews.router)
 
-# Step 4: ?�로???�우???�록
+# Step 4: 새로운 라우터 등록
 app.include_router(reply_posting_endpoints.router)
 app.include_router(reply_status.router)
+app.include_router(reply_posting.router)
 
-# ?�스?�용 ?�우???�록
+# 테스트용 라우터 등록
 app.include_router(test_reply_posting.router)
 
 @app.get("/api")
 async def api_info():
     return {
-        "message": "리뷰 ?�동??API - Step 4 ?�료",
+        "message": "리뷰 자동화 API - Step 4 완료",
         "version": "1.0.0",
         "features": [
-            "리뷰 ?�집",
-            "AI ?��? ?�성",
-            "?��? ?�록 (Step 4 추�?)",
-            "?�괄 처리",
-            "?�태 조회"
+            "리뷰 수집",
+            "AI 답글 생성",
+            "답글 등록 (Step 4 추가)",
+            "일괄 처리",
+            "상태 조회"
         ],
         "docs": "/docs",
         "redoc": "/redoc"
@@ -128,36 +133,36 @@ async def test_endpoint():
         "timestamp": datetime.now().isoformat()
     }
 
-# Step 4: ?�로??API ?�드?�인???�약
+# Step 4: 새로운 API 엔드포인트 요약
 @app.get("/api/endpoints")
 async def list_endpoints():
     """
-    ?�용 가?�한 모든 API ?�드?�인??목록
+    사용 가능한 모든 API 엔드포인트 목록
     """
     return {
-        "기존_?�드?�인??: {
-            "?�증": "/api/auth/*",
-            "매장_관�?: "/api/stores/*",
-            "리뷰_관�?: "/api/reviews/*",
-            "?�이지": "/api/pages/*"
+        "기존_엔드포인트": {
+            "인증": "/api/auth/*",
+            "매장_관리": "/api/stores/*",
+            "리뷰_관리": "/api/reviews/*",
+            "페이지": "/api/pages/*"
         },
-        "Step4_?�로???�드?�인??: {
-            "?��?_?�록": {
-                "?�일_?��?_?�록": "POST /api/reply-posting/{review_id}/submit",
-                "매장�??�괄_?�록": "POST /api/reply-posting/batch/{store_code}/submit",
-                "?�체_매장_?�괄_?�록": "POST /api/reply-posting/batch/all-stores/submit"
+        "Step4_새로운_엔드포인트": {
+            "답글_등록": {
+                "단일_답글_등록": "POST /api/reply-posting/{review_id}/submit",
+                "매장별_일괄_등록": "POST /api/reply-posting/batch/{store_code}/submit",
+                "전체_매장_일괄_등록": "POST /api/reply-posting/batch/all-stores/submit"
             },
-            "?�태_조회": {
-                "?��??��?_조회": "GET /api/reply-status/{store_code}/pending",
-                "?��?_?�태_조회": "GET /api/reply-status/{review_id}/status",
-                "매장_?�약_조회": "GET /api/reply-status/stores/{user_code}/summary",
-                "?��?_?�시??: "POST /api/reply-status/{review_id}/retry"
+            "상태_조회": {
+                "대기_답글_조회": "GET /api/reply-status/{store_code}/pending",
+                "답글_상태_조회": "GET /api/reply-status/{review_id}/status",
+                "매장_요약_조회": "GET /api/reply-status/stores/{user_code}/summary",
+                "답글_재시도": "POST /api/reply-status/{review_id}/retry"
             }
         },
-        "?�스?�용_?�드?�인??: {
-            "?�스???��?_?�록": "POST /api/test-reply-posting/{review_id}/submit",
-            "리뷰_?�보_조회": "GET /api/test-reply-posting/{review_id}/info",
-            "매장_?�보_조회": "GET /api/test-reply-posting/stores/{store_code}/info"
+        "테스트용_엔드포인트": {
+            "테스트_답글_등록": "POST /api/test-reply-posting/{review_id}/submit",
+            "리뷰_정보_조회": "GET /api/test-reply-posting/{review_id}/info",
+            "매장_정보_조회": "GET /api/test-reply-posting/stores/{store_code}/info"
         },
         "문서": {
             "Swagger_UI": "/docs",

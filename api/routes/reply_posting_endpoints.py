@@ -34,9 +34,6 @@ async def submit_reply_to_platform(
 ):
     """
     실제 플랫폼에 답글 등록
-    
-    - review_id: 리뷰 ID
-    - ready_to_post 상태의 답글을 실제 플랫폼에 등록합니다
     """
     try:
         # 리뷰 정보 조회
@@ -48,6 +45,26 @@ async def submit_reply_to_platform(
                 detail=f"리뷰 정보를 찾을 수 없습니다. (review_id: {review_id})"
             )
         
+        # 이미 답글이 등록되었는지 확인
+        if review.get('response_status') == 'posted':
+            logger.warning(f"이미 답글이 등록된 리뷰입니다: review_id={review_id}")
+            return {
+                "success": True,
+                "message": "이미 답글이 등록되었습니다",
+                "review_id": review_id,
+                "status": "already_posted"
+            }
+        
+        # 처리 중인지 확인 (동시 요청 방지)
+        if review.get('response_status') == 'processing':
+            logger.warning(f"답글 등록이 진행 중입니다: review_id={review_id}")
+            return {
+                "success": False,
+                "message": "답글 등록이 진행 중입니다",
+                "review_id": review_id,
+                "status": "processing"
+            }
+        
         # 권한 확인
         has_permission = await supabase.check_user_permission(
             current_user.user_code,
@@ -58,17 +75,42 @@ async def submit_reply_to_platform(
         if not has_permission:
             raise HTTPException(status_code=403, detail="답글 작성 권한이 없습니다")
         
-        # 답글 상태 확인 (ready_to_post 또는 generated 상태여야 함)
-        if review['response_status'] not in ['ready_to_post', 'generated']:
+        # 답글 상태 확인
+        if review['response_status'] not in ['ready_to_post', 'generated', 'failed']:
             raise HTTPException(
                 status_code=400, 
                 detail=f"답글 등록이 불가능한 상태입니다. 현재 상태: {review['response_status']}"
             )
         
-        # 답글 내용 확인 - 요청에서 받은 내용 우선, 없으면 DB에서 가져오기
-        reply_content = request.reply_content or review.get('final_response') or review.get('ai_response')
+        # 상태를 processing으로 업데이트 (동시 요청 방지)
+        try:
+            await supabase.update_review_response(
+                review_id,
+                response_status='processing',
+                response_by=current_user.user_code
+            )
+        except Exception as e:
+            logger.error(f"상태 업데이트 실패: {e}")
+        
+        # 답글 내용 확인
+        reply_content = (
+            request.reply_content or 
+            review.get('final_response') or 
+            review.get('ai_response') or 
+            review.get('response_text')
+        )
+        
         if not reply_content:
-            raise HTTPException(status_code=400, detail="등록할 답글 내용이 없습니다")
+            # 상태를 원래대로 복구
+            await supabase.update_review_response(
+                review_id,
+                response_status=review['response_status']
+            )
+            logger.warning(f"AI 답글을 찾을 수 없음. review keys: {list(review.keys())}")
+            raise HTTPException(
+                status_code=400,
+                detail="AI 답글이 생성되지 않았습니다. 먼저 AI 답글을 생성해주세요."
+            )
         
         # ReplyPostingService 초기화 및 실행
         reply_service = ReplyPostingService(supabase)
@@ -80,32 +122,53 @@ async def submit_reply_to_platform(
             user_code=current_user.user_code
         )
         
+        # 결과에 따라 상태 업데이트는 service에서 처리됨
+        
         if result['success']:
             return {
                 "success": True,
                 "message": "답글이 성공적으로 등록되었습니다",
                 "review_id": review_id,
                 "reply_content": reply_content,
-                "platform": result['platform'],
+                "platform": result.get('platform', ''),
                 "store_name": result.get('store_name', ''),
                 "processing_time": result.get('processing_time', 0),
-                "final_status": result['final_status']
+                "final_status": result.get('final_status', 'posted')
             }
         else:
-            # 실패한 경우에도 상세 정보 제공
+            # 이미 등록된 경우
+            if result.get('status') == 'already_posted' or '이미 답글이 등록' in result.get('error', ''):
+                return {
+                    "success": True,
+                    "message": result.get('error', '이미 답글이 등록되었습니다'),
+                    "review_id": review_id,
+                    "status": "already_posted"
+                }
+            
+            # 실패한 경우
             return {
                 "success": False,
                 "message": f"답글 등록 실패: {result.get('error', '알 수 없는 오류')}",
                 "review_id": review_id,
                 "error_details": result.get('error_details', {}),
                 "retry_count": result.get('retry_count', 0),
-                "can_retry": result.get('can_retry', False)
+                "can_retry": result.get('can_retry', True),
+                "final_status": result.get('final_status', 'failed')
             }
             
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"답글 등록 오류: {e}")
+        # 에러 발생 시 상태 복구
+        try:
+            await supabase.update_review_response(
+                review_id,
+                response_status='failed',
+                error_message=str(e)
+            )
+        except:
+            pass
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -298,8 +361,13 @@ async def retry_failed_reply(
                 detail=f"재시도할 수 없는 상태입니다. 현재 상태: {review['response_status']}"
             )
         
-        # 답글 내용 확인
-        reply_content = review.get('final_response') or review.get('ai_response')
+        # 답글 내용 확인 (여러 키 확인)
+        reply_content = (
+            review.get('final_response') or 
+            review.get('ai_response') or 
+            review.get('response_text')
+        )
+        
         if not reply_content:
             raise HTTPException(status_code=400, detail="재시도할 답글 내용이 없습니다")
         
