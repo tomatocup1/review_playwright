@@ -837,7 +837,16 @@
         }
     });
 
+    // 전역 변수 추가 (함수 외부에 선언)
+    let isPostingReply = false;
+
     async function handleConfirmPostReply() {
+        // 중복 실행 방지
+        if (isPostingReply) {
+            console.log('[중복 방지] 이미 답글 등록이 진행 중입니다.');
+            return;
+        }
+
         // 버튼 요소를 직접 가져오기
         const confirmBtn = document.getElementById('confirmPostReplyBtn');
         if (!confirmBtn) {
@@ -856,8 +865,14 @@
         const originalText = confirmBtn.innerHTML;
 
         try {
+            // 중복 방지 플래그 설정
+            isPostingReply = true;
             confirmBtn.disabled = true;
             confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 등록 중...';
+
+            // 모달의 닫기 버튼도 비활성화
+            const modalCloseBtn = document.querySelector('#postReplyModal .btn-close');
+            if (modalCloseBtn) modalCloseBtn.disabled = true;
 
             addDebugInfo(`답글 등록 시작: ${reviewId}`);
 
@@ -900,8 +915,14 @@
             addDebugInfo(`답글 등록 실패: ${error.message}`);
             showAlert(`답글 등록 실패: ${error.message}`, 'danger');
         } finally {
+            // 상태 복구
+            isPostingReply = false;
             confirmBtn.disabled = false;
             confirmBtn.innerHTML = originalText;
+
+            // 모달 닫기 버튼도 다시 활성화
+            const modalCloseBtn = document.querySelector('#postReplyModal .btn-close');
+            if (modalCloseBtn) modalCloseBtn.disabled = false;
         }
     }
 

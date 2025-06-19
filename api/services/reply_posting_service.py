@@ -164,19 +164,26 @@ class ReplyPostingService:
                         'status': 'already_posted'
                     }
                 
+                # processing 상태 체크를 제거하거나 수정
+                # 옵션 1: processing 상태여도 본인이 처리 중인 경우 계속 진행
                 if current_status == 'processing':
-                    self.logger.warning(f"답글 등록이 진행 중입니다: review_id={review_id}")
-                    return {
-                        'success': False,
-                        'error': '답글 등록이 진행 중입니다.',
-                        'review_id': review_id,
-                        'status': 'processing'
-                    }
+                    # response_by가 현재 사용자와 다른 경우만 차단
+                    processing_by = review_data.get('response_by')
+                    if processing_by and processing_by != user_code:
+                        self.logger.warning(f"다른 사용자가 답글 등록 중입니다: review_id={review_id}, processing_by={processing_by}")
+                        return {
+                            'success': False,
+                            'error': '다른 사용자가 답글 등록을 진행 중입니다.',
+                            'review_id': review_id,
+                            'status': 'processing'
+                        }
+                    # 본인이 처리 중이면 계속 진행
+                    self.logger.info(f"본인이 처리 중인 답글 등록 계속 진행: review_id={review_id}")
             
-            # 상태를 processing으로 업데이트
+            # 상태를 processing으로 업데이트 (user_code 포함)
             try:
                 await self._update_review_status_simple(review_id, 'processing', user_code)
-                self.logger.info(f"상태를 processing으로 변경: review_id={review_id}")
+                self.logger.info(f"상태를 processing으로 변경: review_id={review_id}, user={user_code}")
             except Exception as e:
                 self.logger.error(f"processing 상태 업데이트 실패: {e}")
             
@@ -284,6 +291,26 @@ class ReplyPostingService:
                 'review_id': review_id,
                 'processing_time': int((time.time() - start_time) * 1000)
             }
+
+    async def _update_review_status_simple(self, review_id: str, status: str, user_code: str):
+        """간단한 리뷰 상태 업데이트 (processing 상태 설정용)"""
+        try:
+            update_data = {
+                "response_status": status,
+                "response_by": user_code,
+                "updated_at": datetime.now().isoformat()
+            }
+            
+            query = self.supabase.client.table('reviews').update(update_data).eq(
+                'review_id', review_id
+            )
+            await self.supabase._execute_query(query)
+            
+            self.logger.info(f"리뷰 상태 간단 업데이트 완료: review_id={review_id}, status={status}, user={user_code}")
+            
+        except Exception as e:
+            self.logger.error(f"리뷰 상태 간단 업데이트 실패: {str(e)}")
+
 
     def _validate_reply_request(self, review_id: str, reply_content: str, user_code: str) -> Dict[str, Any]:
         """
@@ -824,25 +851,6 @@ class ReplyPostingService:
                 'final_status': 'failed'
             }
 
-async def _update_review_status_simple(self, review_id: str, status: str, user_code: str):
-    """간단한 리뷰 상태 업데이트 (processing 상태 설정용)"""
-    try:
-        update_data = {
-            "response_status": status,
-            "response_by": user_code,
-            "updated_at": datetime.now().isoformat()
-        }
-        
-        query = self.supabase.client.table('reviews').update(update_data).eq(
-            'review_id', review_id
-        )
-        await self.supabase._execute_query(query)
-        
-        self.logger.info(f"리뷰 상태 간단 업데이트 완료: review_id={review_id}, status={status}")
-        
-    except Exception as e:
-        self.logger.error(f"리뷰 상태 간단 업데이트 실패: {str(e)}")
-        
     async def _check_user_permission(self, user_code: str, store_code: str) -> bool:
         """사용자 권한 확인"""
         try:
