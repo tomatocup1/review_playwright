@@ -9,6 +9,7 @@ import secrets
 import asyncio
 import json
 import os
+import traceback
 from functools import wraps
 from supabase import Client
 
@@ -53,9 +54,13 @@ async def get_supported_platforms():
 @router.post("/crawl", response_model=PlatformStoresResponse)
 async def crawl_platform_stores(
     request: StoreCrawlRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Client = Depends(get_db)
 ):
     """플랫폼에서 매장 정보 크롤링"""
+    from api.services.error_logger import ErrorLogger
+    error_logger = ErrorLogger(db)
+    
     try:
         # 테스트 모드에서는 더미 데이터 반환
         if IS_TEST_MODE and request.platform_id.startswith("test"):
@@ -100,43 +105,170 @@ async def crawl_platform_stores(
         # 실제 크롤링 모드
         logger.info(f"실제 크롤링 시작: {request.platform.value}")
         
-        # 크롤러 인스턴스 생성 - headless=True로 변경
-        async with get_crawler(request.platform.value, headless=True) as crawler:
-            # 로그인
-            login_success = await crawler.login(request.platform_id, request.platform_pw)
-            if not login_success:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"{request.platform.value} 로그인에 실패했습니다. ID/PW를 확인해주세요."
-                )
-            
-            # 매장 목록 가져오기
-            stores_data = await crawler.get_store_list()
-            
-            # 응답 형식으로 변환
-            stores = []
-            for store_data in stores_data:
-                store = PlatformStore(
+        try:
+            # 크롤러 인스턴스 생성
+            async with get_crawler(request.platform.value, headless=True) as crawler:
+                # 로그인 시도
+                try:
+                    login_success = await asyncio.wait_for(
+                        crawler.login(request.platform_id, request.platform_pw),
+                        timeout=60  # 60초 타임아웃
+                    )
+                    if not login_success:
+                        # 로그인 실패 에러 로그
+                        await error_logger.log_crawler_error(
+                            platform=request.platform.value,
+                            error_type="LOGIN_FAILED",
+                            error_message=f"{request.platform.value} 플랫폼 로그인 실패 - ID/PW 오류",
+                            user_code=current_user.user_code,
+                            request_data={
+                                "platform_id": request.platform_id,
+                                "attempt_time": datetime.now().isoformat(),
+                                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"
+                            }
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail=f"{request.platform.value} 로그인에 실패했습니다. ID/PW를 확인해주세요."
+                        )
+                except asyncio.TimeoutError:
+                    # 로그인 타임아웃 에러 로그
+                    await error_logger.log_crawler_error(
+                        platform=request.platform.value,
+                        error_type="LOGIN_TIMEOUT",
+                        error_message="로그인 시도 중 타임아웃 발생 (60초 초과)",
+                        user_code=current_user.user_code,
+                        request_data={
+                            "platform_id": request.platform_id,
+                            "timeout_seconds": 60
+                        }
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                        detail="로그인 시간이 초과되었습니다. 네트워크 상태를 확인하고 다시 시도해주세요."
+                    )
+                except Exception as e:
+                    # 로그인 중 예상치 못한 에러
+                    await error_logger.log_crawler_error(
+                        platform=request.platform.value,
+                        error_type="LOGIN_EXCEPTION",
+                        error_message=f"로그인 중 예외 발생: {str(e)}",
+                        user_code=current_user.user_code,
+                        stack_trace=traceback.format_exc()
+                    )
+                    raise
+                
+                # 매장 목록 가져오기
+                try:
+                    stores_data = await asyncio.wait_for(
+                        crawler.get_store_list(),
+                        timeout=60  # 60초 타임아웃
+                    )
+                    
+                    # 배민의 경우 가게가 없는 특별 처리
+                    if not stores_data and request.platform.value == "baemin":
+                        # 배민 가게 미등록 에러 로그
+                        await error_logger.log_crawler_error(
+                            platform=request.platform.value,
+                            error_type="NO_STORES_REGISTERED",
+                            error_message="배달의민족에 등록된 가게가 없습니다",
+                            user_code=current_user.user_code,
+                            # severity는 log_crawler_error 내부에서 처리되므로 제거
+                            request_data={
+                                "platform_id": request.platform_id,
+                                "message": "사장님은 먼저 배달의민족에 가게를 등록해야 합니다"
+                            }
+                        )
+                        
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail="배달의민족에 등록된 가게가 없습니다. 먼저 배달의민족에 가게를 등록해주세요."
+                        )
+                    
+                    if not stores_data:
+                        # 다른 플랫폼의 경우 일반적인 처리
+                        await error_logger.log_crawler_error(
+                            platform=request.platform.value,
+                            error_type="NO_STORES_FOUND",
+                            error_message="등록된 매장이 없습니다",
+                            user_code=current_user.user_code
+                        )
+                        # 빈 배열 반환하여 정상 응답 처리
+                        stores_data = []
+                        
+                except asyncio.TimeoutError:
+                    # 매장 목록 조회 타임아웃
+                    await error_logger.log_crawler_error(
+                        platform=request.platform.value,
+                        error_type="STORE_LIST_TIMEOUT",
+                        error_message="매장 목록 조회 중 타임아웃 발생 (60초 초과)",
+                        user_code=current_user.user_code
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                        detail="매장 목록 조회 시간이 초과되었습니다. 잠시 후 다시 시도해주세요."
+                    )
+                
+                # 응답 형식으로 변환
+                stores = []
+                for store_data in stores_data:
+                    store = PlatformStore(
+                        platform=request.platform,
+                        platform_code=store_data.get('platform_code', ''),
+                        store_name=store_data.get('store_name', ''),
+                        store_type=store_data.get('store_type'),
+                        category=store_data.get('category'),
+                        brand_name=store_data.get('brand_name'),
+                        status=store_data.get('status')
+                    )
+                    stores.append(store)
+                
+                logger.info(f"매장 크롤링 성공: {len(stores)}개 매장 발견")
+                
+                return PlatformStoresResponse(
                     platform=request.platform,
-                    platform_code=store_data.get('platform_code', ''),
-                    store_name=store_data.get('store_name', ''),
-                    store_type=store_data.get('store_type'),
-                    category=store_data.get('category'),
-                    brand_name=store_data.get('brand_name'),
-                    status=store_data.get('status')
+                    stores=stores,
+                    count=len(stores)
                 )
-                stores.append(store)
+                
+        except HTTPException:
+            raise
+        
+        except Exception as e:
+            # 예상치 못한 크롤러 에러
+            # 에러 메시지에서 특별한 경우 처리
+            error_msg = str(e)
             
-            return PlatformStoresResponse(
-                platform=request.platform,
-                stores=stores,
-                count=len(stores)
+            # ErrorLogger 관련 에러는 무시하고 원래 에러 처리
+            if "ErrorLogger" in error_msg and "severity" in error_msg:
+                logger.warning(f"에러 로깅 중 문제 발생, 원래 에러 처리 계속: {error_msg}")
+            else:
+                await error_logger.log_crawler_error(
+                    platform=request.platform.value,
+                    error_type="CRAWLER_UNEXPECTED",
+                    error_message=f"크롤러 실행 중 예상치 못한 오류: {error_msg}",
+                    user_code=current_user.user_code,
+                    stack_trace=traceback.format_exc()
+                )
+            
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"매장 정보 크롤링 중 오류가 발생했습니다: {str(e)}"
             )
             
     except HTTPException:
         raise
+    
     except Exception as e:
+        # 최상위 예외 처리
         logger.error(f"매장 크롤링 중 오류: {str(e)}")
+        await error_logger.log_api_error(
+            error_type="STORE_CRAWL_FAILED",
+            error_message=str(e),
+            endpoint="/api/stores/crawl",
+            user_code=current_user.user_code,
+            stack_trace=traceback.format_exc()
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"매장 정보 크롤링 중 오류가 발생했습니다: {str(e)}"
@@ -150,6 +282,9 @@ async def register_store(
     db: Client = Depends(get_db)
 ):
     """매장 등록"""
+    from api.services.error_logger import ErrorLogger
+    error_logger = ErrorLogger(db)
+    
     try:
         # 1. 플랫폼 로그인 정보로 매장 정보 자동 조회 (platform_code가 없는 경우)
         if not request.platform_code or not request.store_name:
@@ -162,39 +297,77 @@ async def register_store(
                     request.store_name = "테스트 매장"
             else:
                 # 실제 크롤링
-                async with get_crawler(request.platform.value, headless=True) as crawler:
-                    # 로그인
-                    login_success = await crawler.login(request.platform_id, request.platform_pw)
-                    if not login_success:
-                        return StoreRegisterResponse(
-                            success=False,
-                            message=f"{request.platform.value} 로그인에 실패했습니다. ID/PW를 확인해주세요."
+                try:
+                    async with get_crawler(request.platform.value, headless=True) as crawler:
+                        # 로그인
+                        login_success = await asyncio.wait_for(
+                            crawler.login(request.platform_id, request.platform_pw),
+                            timeout=60
                         )
-                    
-                    # 매장 목록 가져오기
-                    stores = await crawler.get_store_list()
-                    
-                    if not stores:
-                        return StoreRegisterResponse(
-                            success=False,
-                            message="등록 가능한 매장을 찾을 수 없습니다."
-                        )
-                    
-                    # platform_code가 지정된 경우 해당 매장 찾기
-                    if request.platform_code:
-                        store_info = next((s for s in stores if s['platform_code'] == request.platform_code), None)
-                        if not store_info:
+                        if not login_success:
+                            await error_logger.log_api_error(
+                                error_type="REGISTER_LOGIN_FAILED",
+                                error_message=f"{request.platform.value} 로그인 실패",
+                                endpoint="/api/stores/register",
+                                user_code=current_user.user_code,
+                                request_data={"platform": request.platform.value}
+                            )
                             return StoreRegisterResponse(
                                 success=False,
-                                message=f"플랫폼 코드 {request.platform_code}에 해당하는 매장을 찾을 수 없습니다."
+                                message=f"{request.platform.value} 로그인에 실패했습니다. ID/PW를 확인해주세요."
                             )
-                    else:
-                        # 첫 번째 매장 선택
-                        store_info = stores[0]
-                    
-                    # 요청 데이터 업데이트
-                    request.platform_code = store_info['platform_code']
-                    request.store_name = store_info['store_name']
+                        
+                        # 매장 목록 가져오기
+                        stores = await asyncio.wait_for(
+                            crawler.get_store_list(),
+                            timeout=60
+                        )
+                        
+                        if not stores:
+                            return StoreRegisterResponse(
+                                success=False,
+                                message="등록 가능한 매장을 찾을 수 없습니다."
+                            )
+                        
+                        # platform_code가 지정된 경우 해당 매장 찾기
+                        if request.platform_code:
+                            store_info = next((s for s in stores if s['platform_code'] == request.platform_code), None)
+                            if not store_info:
+                                return StoreRegisterResponse(
+                                    success=False,
+                                    message=f"플랫폼 코드 {request.platform_code}에 해당하는 매장을 찾을 수 없습니다."
+                                )
+                        else:
+                            # 첫 번째 매장 선택
+                            store_info = stores[0]
+                        
+                        # 요청 데이터 업데이트
+                        request.platform_code = store_info['platform_code']
+                        request.store_name = store_info['store_name']
+                        
+                except asyncio.TimeoutError:
+                    await error_logger.log_api_error(
+                        error_type="REGISTER_TIMEOUT",
+                        error_message="매장 정보 조회 중 타임아웃",
+                        endpoint="/api/stores/register",
+                        user_code=current_user.user_code
+                    )
+                    return StoreRegisterResponse(
+                        success=False,
+                        message="매장 정보 조회 시간이 초과되었습니다. 다시 시도해주세요."
+                    )
+                except Exception as e:
+                    await error_logger.log_api_error(
+                        error_type="REGISTER_CRAWL_ERROR",
+                        error_message=f"매장 정보 조회 실패: {str(e)}",
+                        endpoint="/api/stores/register",
+                        user_code=current_user.user_code,
+                        stack_trace=traceback.format_exc()
+                    )
+                    return StoreRegisterResponse(
+                        success=False,
+                        message=f"매장 정보 조회 중 오류가 발생했습니다: {str(e)}"
+                    )
         
         # 2. 중복 확인
         @async_wrapper
@@ -270,6 +443,13 @@ async def register_store(
         
     except Exception as e:
         logger.error(f"매장 등록 중 오류: {str(e)}")
+        await error_logger.log_api_error(
+            error_type="STORE_REGISTER_FAILED",
+            error_message=str(e),
+            endpoint="/api/stores/register",
+            user_code=current_user.user_code,
+            stack_trace=traceback.format_exc()
+        )
         return StoreRegisterResponse(
             success=False,
             message=f"매장 등록 중 오류가 발생했습니다: {str(e)}"

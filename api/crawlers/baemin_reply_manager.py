@@ -13,6 +13,7 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 from pathlib import Path
 import re
 import json
+from ..utils.error_handler import log_login_error, log_reply_error, ErrorType
 
 # 로깅 설정
 logging.basicConfig(
@@ -158,6 +159,16 @@ class BaeminReplyManager:
                     page_content = await self.page.content()
                     logger.info(f"페이지 HTML 일부: {page_content[:500]}...")
                     
+                    # 에러 로깅
+                    await log_login_error(
+                        platform='baemin',
+                        username=username,
+                        error_type=ErrorType.UI_CHANGED,
+                        error_message="로그인 페이지에서 ID 입력 필드를 찾을 수 없습니다",
+                        screenshot_path=str(screenshot_path),
+                        current_url=self.page.url
+                    )
+                    
                     raise Exception("ID 입력 필드를 찾을 수 없습니다")
                 
                 # ID 입력
@@ -192,6 +203,20 @@ class BaeminReplyManager:
                         continue
                 
                 if not pw_input:
+                    # 스크린샷 저장
+                    screenshot_path = PROJECT_ROOT / 'logs' / f'login_no_pw_field_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
+                    await self.page.screenshot(path=str(screenshot_path), full_page=True)
+                    
+                    # 에러 로깅
+                    await log_login_error(
+                        platform='baemin',
+                        username=username,
+                        error_type=ErrorType.UI_CHANGED,
+                        error_message="로그인 페이지에서 비밀번호 입력 필드를 찾을 수 없습니다",
+                        screenshot_path=str(screenshot_path),
+                        current_url=self.page.url
+                    )
+                    
                     raise Exception("비밀번호 입력 필드를 찾을 수 없습니다")
                 
                 # 비밀번호 입력
@@ -261,6 +286,7 @@ class BaeminReplyManager:
                         return True
                     else:
                         # 에러 메시지 확인
+                        error_text = ""
                         try:
                             error_msg = await self.page.query_selector('.error-message, .alert-danger, [class*="error"]')
                             if error_msg:
@@ -274,8 +300,27 @@ class BaeminReplyManager:
                         screenshot_path = PROJECT_ROOT / 'logs' / f'login_failed_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
                         await self.page.screenshot(path=str(screenshot_path))
                         logger.info(f"로그인 실패 스크린샷: {screenshot_path}")
-                        return False
                         
+                        # 에러 유형 판단
+                        error_type = ErrorType.INVALID_CREDENTIALS
+                        if "잘못" in error_text or "오류" in error_text or "일치" in error_text:
+                            error_type = ErrorType.INVALID_CREDENTIALS
+                        elif "잠긴" in error_text or "잠겨" in error_text:
+                            error_type = ErrorType.ACCOUNT_LOCKED
+                        elif "보안" in error_text or "인증" in error_text:
+                            error_type = ErrorType.CAPTCHA_REQUIRED
+                        
+                        # 에러 로깅
+                        await log_login_error(
+                            platform='baemin',
+                            username=username,
+                            error_type=error_type,
+                            error_message=error_text or "로그인 실패 - URL이 변경되지 않음",
+                            screenshot_path=str(screenshot_path),
+                            current_url=final_url
+                        )
+                        
+                        return False
             except Exception as e:
                 logger.error(f"로그인 폼 처리 중 오류: {str(e)}")
                 # 스크린샷 저장
@@ -466,6 +511,18 @@ class BaeminReplyManager:
             await self.page.screenshot(path=str(debug_path), full_page=True)
             logger.info(f"디버그 스크린샷 저장: {debug_path}")
             
+            # 에러 로깅
+            await log_reply_error(
+                platform='baemin',
+                store_code=getattr(self, 'current_store_code', 'unknown'),
+                store_name=getattr(self, 'current_store_name', 'unknown'),
+                review_id=review_id,
+                error_type=ErrorType.ELEMENT_NOT_FOUND,
+                error_message=f"리뷰를 찾을 수 없습니다. Review ID: {review_id}",
+                screenshot_path=str(debug_path),
+                current_url=self.page.url
+            )
+            
             return False
             
         except Exception as e:
@@ -504,6 +561,19 @@ class BaeminReplyManager:
                 # 스크린샷
                 screenshot_path = PROJECT_ROOT / 'logs' / f'no_textarea_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
                 await self.page.screenshot(path=str(screenshot_path))
+                
+                # 에러 로깅
+                await log_reply_error(
+                    platform='baemin',
+                    store_code=getattr(self, 'current_store_code', 'unknown'),
+                    store_name=getattr(self, 'current_store_name', 'unknown'),
+                    review_id=getattr(self, 'current_review_id', 'unknown'),
+                    error_type=ErrorType.REPLY_INPUT_NOT_FOUND,
+                    error_message="답글 작성을 위한 textarea를 찾을 수 없습니다",
+                    screenshot_path=str(screenshot_path),
+                    current_url=self.page.url
+                )
+                
                 return False
             
             # 입력 필드 클릭 및 포커스
@@ -547,6 +617,24 @@ class BaeminReplyManager:
             
             if not submit_button:
                 logger.error("등록 버튼을 찾을 수 없습니다")
+                
+                # 스크린샷
+                screenshot_path = PROJECT_ROOT / 'logs' / f'no_submit_button_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
+                await self.page.screenshot(path=str(screenshot_path))
+                
+                # 에러 로깅
+                await log_reply_error(
+                    platform='baemin',
+                    store_code=getattr(self, 'current_store_code', 'unknown'),
+                    store_name=getattr(self, 'current_store_name', 'unknown'),
+                    review_id=getattr(self, 'current_review_id', 'unknown'),
+                    error_type=ErrorType.ELEMENT_NOT_FOUND,
+                    error_message="답글 등록 버튼을 찾을 수 없습니다",
+                    reply_text=reply_text[:100],
+                    screenshot_path=str(screenshot_path),
+                    current_url=self.page.url
+                )
+                
                 return False
             
             # 등록 버튼 클릭

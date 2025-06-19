@@ -204,7 +204,47 @@ class BaeminSyncCrawler:
                     
         except Exception as e:
             logger.debug(f"팝업 처리 중 예외 발생: {str(e)}")
+
+    def handle_popups(self):
+        """모든 종류의 팝업 처리"""
+        try:
+            # 팝업이 나타날 때까지 잠시 대기
+            self.page.wait_for_timeout(2000)
             
+            # 다양한 팝업 닫기 버튼 선택자
+            popup_close_selectors = [
+                'button:has-text("오늘 하루 보지 않기")',
+                'span:has-text("오늘 하루 보지 않기")',
+                'button:has-text("닫기")',
+                'button:has-text("확인")',
+                '[aria-label="Close"]',
+                '[aria-label="닫기"]',
+                '.close-button',
+                '.popup-close',
+                'button.close'
+            ]
+            
+            closed_count = 0
+            for selector in popup_close_selectors:
+                try:
+                    elements = self.page.query_selector_all(selector)
+                    for element in elements:
+                        if element.is_visible():
+                            element.click()
+                            closed_count += 1
+                            logger.info(f"팝업 닫기: {selector}")
+                            self.page.wait_for_timeout(500)
+                except:
+                    continue
+            
+            if closed_count > 0:
+                logger.info(f"총 {closed_count}개의 팝업을 닫았습니다")
+            else:
+                logger.info("닫을 팝업이 없거나 이미 닫혀있습니다")
+                
+        except Exception as e:
+            logger.debug(f"팝업 처리 중 예외 발생: {str(e)}")
+
     def get_store_list(self) -> List[Dict[str, Any]]:
         """매장 목록 조회"""
         try:
@@ -256,93 +296,126 @@ class BaeminSyncCrawler:
                     options = self.page.query_selector_all(f'{selector} option')
                     
                     if options:
-                        logger.info(f"{len(options)}개의 매장 발견")
+                        logger.info(f"{len(options)}개의 옵션 발견")
+                        
+                        # 배민 서비스 메뉴 목록 (실제 가게가 아닌 것들)
+                        service_names = [
+                            '배민셀프서비스', '배민외식업광장', '배민상회', 
+                            '배민아카데미', '배민로봇', '배민오더',
+                            '셀프서비스', '외식업광장', '상회', 
+                            '아카데미', '로봇', '오더'
+                        ]
+                        service_codes = ['self', 'ceo', 'store', 'academy', 'robot', 'order']
+                        
+                        actual_stores = []  # 실제 가게만 저장
                         
                         for option in options:
                             value = option.get_attribute('value')
                             text = option.text_content()
                             
                             if value and text:
-                                logger.info(f"옵션 발견: {text}")
+                                text = text.strip()
+                                logger.info(f"옵션 발견: {text} (value: {value})")
                                 
-                                # 텍스트에서 매장 정보 파싱
-                                # 예: "[음식배달] 더클램 데이 / 카페·디저트 14545991"
-                                # 정규식 패턴 수정 - 마지막 숫자 부분을 선택적으로
-                                patterns = [
-                                    r'\[(.*?)\]\s*(.+?)\s*/\s*(.+?)\s*(\d+)$',  # 끝에 숫자가 있는 경우
-                                    r'\[(.*?)\]\s*(.+?)\s*/\s*(.+?)$',  # 숫자가 없는 경우
-                                    r'(.+?)\s*/\s*(.+?)\s*(\d+)$',  # 대괄호가 없는 경우
-                                ]
-                                
-                                matched = False
-                                for pattern in patterns:
-                                    match = re.match(pattern, text.strip())
-                                    if match:
-                                        if len(match.groups()) == 4:  # 숫자 포함
-                                            store_type = match.group(1)
-                                            store_name = match.group(2).strip()
-                                            category = match.group(3).strip()
-                                            platform_code = match.group(4)
-                                        elif len(match.groups()) == 3 and match.group(3).isdigit():  # 대괄호 없고 숫자 있음
-                                            store_type = '음식배달'
-                                            store_name = match.group(1).strip()
-                                            category = match.group(2).strip()
-                                            platform_code = match.group(3)
-                                        else:  # 숫자 없음
-                                            store_type = match.group(1) if '[' in text else '음식배달'
-                                            store_name = match.group(2) if '[' in text else match.group(1).strip()
-                                            category = match.group(3) if '[' in text else match.group(2).strip()
-                                            platform_code = value
-                                        
-                                        matched = True
+                                # 서비스 메뉴인지 확인
+                                is_service = False
+                                for service_name in service_names:
+                                    if service_name in text:
+                                        is_service = True
+                                        logger.info(f"서비스 메뉴 제외: {text}")
                                         break
                                 
-                                if not matched:
-                                    # 패턴 매칭 실패 시 기본 파싱
-                                    parts = text.strip().split('/')
-                                    if parts:
-                                        store_name = parts[0].strip()
-                                        if '[' in store_name:
-                                            store_name = store_name.split(']')[-1].strip()
-                                        category = parts[1].strip() if len(parts) > 1 else ''
-                                    else:
-                                        store_name = text.strip()
-                                        category = ''
-                                    store_type = '음식배달'
-                                    platform_code = value
+                                # value가 서비스 코드인지 확인
+                                if value in service_codes:
+                                    is_service = True
+                                    logger.info(f"서비스 코드 제외: {value}")
                                 
-                                store_info = {
-                                    'platform': 'baemin',
-                                    'platform_code': platform_code,
-                                    'store_name': store_name,
-                                    'store_type': store_type,
-                                    'category': category,
-                                    'status': '영업중'
-                                }
-                                
-                                stores.append(store_info)
-                                logger.info(f"매장 추가: {store_name} (코드: {platform_code}, 카테고리: {category})")
+                                # 실제 가게인 경우만 처리
+                                if not is_service and value and text:
+                                    # 텍스트에서 매장 정보 파싱
+                                    # 예: "[음식배달] 더클램 데이 / 카페·디저트 14545991"
+                                    patterns = [
+                                        r'\[(.*?)\]\s*(.+?)\s*/\s*(.+?)\s*(\d+)$',  # 끝에 숫자가 있는 경우
+                                        r'\[(.*?)\]\s*(.+?)\s*/\s*(.+?)$',  # 숫자가 없는 경우
+                                        r'(.+?)\s*/\s*(.+?)\s*(\d+)$',  # 대괄호가 없는 경우
+                                    ]
+                                    
+                                    matched = False
+                                    for pattern in patterns:
+                                        match = re.match(pattern, text)
+                                        if match:
+                                            if len(match.groups()) == 4:  # 숫자 포함
+                                                store_type = match.group(1)
+                                                store_name = match.group(2).strip()
+                                                category = match.group(3).strip()
+                                                platform_code = match.group(4)
+                                            elif len(match.groups()) == 3 and match.group(3).isdigit():  # 대괄호 없고 숫자 있음
+                                                store_type = '음식배달'
+                                                store_name = match.group(1).strip()
+                                                category = match.group(2).strip()
+                                                platform_code = match.group(3)
+                                            else:  # 숫자 없음
+                                                store_type = match.group(1) if '[' in text else '음식배달'
+                                                store_name = match.group(2) if '[' in text else match.group(1).strip()
+                                                category = match.group(3) if '[' in text else match.group(2).strip()
+                                                platform_code = value
+                                            
+                                            matched = True
+                                            break
+                                    
+                                    if not matched:
+                                        # 패턴 매칭 실패 시 기본 파싱
+                                        parts = text.split('/')
+                                        if parts:
+                                            store_name = parts[0].strip()
+                                            if '[' in store_name:
+                                                store_name = store_name.split(']')[-1].strip()
+                                            category = parts[1].strip() if len(parts) > 1 else ''
+                                        else:
+                                            store_name = text
+                                            category = ''
+                                        store_type = '음식배달'
+                                        platform_code = value
+                                    
+                                    store_info = {
+                                        'platform': 'baemin',
+                                        'platform_code': platform_code,
+                                        'store_name': store_name,
+                                        'store_type': store_type,
+                                        'category': category,
+                                        'status': '영업중'
+                                    }
+                                    
+                                    actual_stores.append(store_info)
+                                    logger.info(f"실제 매장 추가: {store_name} (코드: {platform_code}, 카테고리: {category})")
+                        
+                        # 실제 가게 확인
+                        if not actual_stores:
+                            logger.warning("배달의민족에 등록된 실제 가게가 없습니다")
+                            logger.info(f"발견된 서비스 메뉴: {[opt.text_content() for opt in options]}")
+                            
+                            # 현재 URL 확인 (가게 코드가 없는 경우)
+                            if 'mypage?' in current_url or current_url.endswith('mypage'):
+                                logger.warning("URL에 가게 코드가 없음 - 가게 미등록 상태")
+                            
+                            # 빈 리스트 반환 (상위에서 에러 처리)
+                            return []
+                        
+                        stores = actual_stores
+                        logger.info(f"배민 실제 매장 총 {len(stores)}개 발견")
+                        
                     else:
                         logger.warning("option 요소를 찾을 수 없습니다")
+                        return []
                 else:
                     logger.warning("select 요소를 찾을 수 없습니다")
+                    return []
                     
             except Exception as e:
                 logger.error(f"매장 목록 파싱 중 오류: {str(e)}")
                 self.save_screenshot("store_list_error")
+                return []
             
-            if not stores:
-                logger.warning("매장 목록을 찾을 수 없습니다")
-                return [{
-                    'platform': 'baemin',
-                    'platform_code': 'TEST_001',
-                    'store_name': '(테스트) 매장을 찾을 수 없습니다',
-                    'store_type': '테스트',
-                    'category': '',
-                    'status': '확인필요'
-                }]
-            
-            logger.info(f"배민 매장 총 {len(stores)}개 발견")
             return stores
             
         except Exception as e:

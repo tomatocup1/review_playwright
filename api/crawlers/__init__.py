@@ -142,6 +142,11 @@ class SubprocessCrawlerWrapper:
             
             if data.get('error'):
                 logger.error(f"크롤러 에러: {data['error']}")
+                
+                # 배민 가게 미등록 특별 처리
+                if data.get('error_type') == 'NO_STORES_REGISTERED':
+                    return []  # 빈 리스트 반환하여 상위에서 처리
+                    
                 if data.get('login_success') == False:
                     raise Exception("로그인 실패")
                 return []

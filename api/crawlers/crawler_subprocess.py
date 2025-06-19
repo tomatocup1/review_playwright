@@ -38,32 +38,86 @@ async def run_async_crawler(platform, username, password, action, headless):
         elif platform == 'yogiyo':
             crawler = YogiyoCrawler(headless=headless)
         else:
-            print(json.dumps({"error": f"Invalid async platform: {platform}"}))
+            print(json.dumps({
+                "error": f"Invalid async platform: {platform}",
+                "error_type": "INVALID_PLATFORM"
+            }))
             return
         
-        await crawler.start_browser()
+        # 브라우저 시작 시도
+        try:
+            await asyncio.wait_for(crawler.start_browser(), timeout=30)
+        except asyncio.TimeoutError:
+            print(json.dumps({
+                "error": "Browser start timeout",
+                "error_type": "BROWSER_START_TIMEOUT",
+                "platform": platform
+            }))
+            return
         
         if action == 'get_stores':
-            # 로그인
-            login_success = await crawler.login(username, password)
-            if not login_success:
-                print(json.dumps({"error": "Login failed", "login_success": False}))
+            # 로그인 시도
+            try:
+                login_success = await asyncio.wait_for(
+                    crawler.login(username, password),
+                    timeout=60
+                )
+                if not login_success:
+                    print(json.dumps({
+                        "error": "Login failed",
+                        "error_type": "LOGIN_FAILED",
+                        "login_success": False,
+                        "platform": platform
+                    }))
+                    return
+            except asyncio.TimeoutError:
+                print(json.dumps({
+                    "error": "Login timeout",
+                    "error_type": "LOGIN_TIMEOUT",
+                    "platform": platform
+                }))
                 return
             
             # 매장 목록 가져오기
-            stores = await crawler.get_store_list()
-            print(json.dumps({"success": True, "stores": stores}))
+            try:
+                stores = await asyncio.wait_for(
+                    crawler.get_store_list(),
+                    timeout=60
+                )
+                print(json.dumps({
+                    "success": True,
+                    "stores": stores,
+                    "platform": platform
+                }))
+            except asyncio.TimeoutError:
+                print(json.dumps({
+                    "error": "Store list timeout",
+                    "error_type": "STORE_LIST_TIMEOUT",
+                    "platform": platform
+                }))
+                return
         else:
-            print(json.dumps({"error": f"Unknown action: {action}"}))
+            print(json.dumps({
+                "error": f"Unknown action: {action}",
+                "error_type": "UNKNOWN_ACTION"
+            }))
             
     except Exception as e:
         import traceback
-        logger.error(f"크롤러 실행 중 오류: {str(e)}")
-        logger.error(traceback.format_exc())
-        print(json.dumps({"error": str(e)}))
+        error_details = {
+            "error": str(e),
+            "error_type": "CRAWLER_EXCEPTION",
+            "platform": platform,
+            "traceback": traceback.format_exc()
+        }
+        logger.error(f"크롤러 실행 중 오류: {json.dumps(error_details)}")
+        print(json.dumps(error_details))
     finally:
         if crawler:
-            await crawler.close_browser()
+            try:
+                await asyncio.wait_for(crawler.close_browser(), timeout=10)
+            except:
+                pass
 
 def main():
     """서브프로세스 메인 함수"""
@@ -94,7 +148,17 @@ def main():
                 
                 # 매장 목록 가져오기
                 stores = crawler.get_store_list()
-                print(json.dumps({"success": True, "stores": stores}))
+                
+                # 실제 가게가 없는 경우 특별 처리
+                if not stores:
+                    print(json.dumps({
+                        "success": False,
+                        "error": "배달의민족에 등록된 가게가 없습니다",
+                        "error_type": "NO_STORES_REGISTERED",
+                        "stores": []
+                    }))
+                else:
+                    print(json.dumps({"success": True, "stores": stores}))
             else:
                 print(json.dumps({"error": f"Unknown action: {action}"}))
                 

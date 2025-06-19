@@ -7,6 +7,7 @@ import logging
 from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 from config.openai_client import get_openai_client
+from ..utils.error_handler import log_api_error, ErrorType
 
 logger = logging.getLogger(__name__)
 
@@ -45,16 +46,43 @@ class AIService:
             system_prompt = self._create_system_prompt(store_rules)
             
             # OpenAI API 호출
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
-            
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens
+                )
+            except Exception as api_error:
+                # API 에러 로깅
+                error_type = ErrorType.API_TIMEOUT
+                error_message = str(api_error)
+                
+                if "rate_limit" in error_message.lower() or "quota" in error_message.lower():
+                    error_type = ErrorType.API_RATE_LIMIT
+                elif "timeout" in error_message.lower():
+                    error_type = ErrorType.API_TIMEOUT
+                elif "invalid" in error_message.lower():
+                    error_type = ErrorType.INVALID_RESPONSE
+                
+                await log_api_error(
+                    api_type='openai',
+                    error_type=error_type,
+                    error_message=error_message,
+                    request_data={
+                        'model': self.model,
+                        'temperature': self.temperature,
+                        'max_tokens': self.max_tokens,
+                        'prompt_length': len(prompt)
+                    },
+                    store_code=review_data.get('store_code'),
+                    review_id=review_data.get('review_id')
+                )
+                
+                raise  # 에러 재발생
             generated_reply = response.choices[0].message.content
             if generated_reply:
                 generated_reply = generated_reply.strip()
