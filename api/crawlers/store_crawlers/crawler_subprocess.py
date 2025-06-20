@@ -9,15 +9,19 @@ import asyncio
 from pathlib import Path
 
 # 프로젝트 경로 추가 - 상대 임포트 오류 해결
-current_dir = Path(__file__).parent
-project_root = current_dir.parent.parent  # api/crawlers 디렉토리
-sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(current_dir.parent))
+current_dir = Path(__file__).parent  # store_crawlers
+crawlers_dir = current_dir.parent  # crawlers
+api_dir = crawlers_dir.parent  # api
+project_root = api_dir.parent  # Review_playwright
 
-# 이제 임포트
-from api.crawlers.review_crawlers.baemin_sync_crawler import BaeminSyncCrawler
-from api.crawlers.coupang_crawler import CoupangCrawler
-from api.crawlers.yogiyo_crawler import YogiyoCrawler
+# sys.path에 필요한 경로 추가
+sys.path.insert(0, str(project_root))  # 프로젝트 루트
+sys.path.insert(0, str(api_dir))  # api 디렉토리
+
+# 이제 임포트 - review_crawlers에서 직접 임포트
+from crawlers.review_crawlers.baemin_sync_crawler import BaeminSyncCrawler
+from crawlers.coupang_crawler import CoupangCrawler
+from crawlers.yogiyo_crawler import YogiyoCrawler
 
 logging.basicConfig(
     level=logging.INFO,
