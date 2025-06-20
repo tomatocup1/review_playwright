@@ -18,6 +18,13 @@ project_root = api_dir.parent  # Review_playwright
 sys.path.insert(0, str(project_root))  # 프로젝트 루트
 sys.path.insert(0, str(api_dir))  # api 디렉토리
 
+# 디버깅을 위한 경로 출력
+print(f"[DEBUG] current_dir: {current_dir}", file=sys.stderr)
+print(f"[DEBUG] crawlers_dir: {crawlers_dir}", file=sys.stderr)
+print(f"[DEBUG] api_dir: {api_dir}", file=sys.stderr)
+print(f"[DEBUG] project_root: {project_root}", file=sys.stderr)
+print(f"[DEBUG] sys.path: {sys.path[:3]}", file=sys.stderr)
+
 # 이제 임포트 - review_crawlers에서 직접 임포트
 from crawlers.review_crawlers.baemin_sync_crawler import BaeminSyncCrawler
 from crawlers.coupang_crawler import CoupangCrawler
