@@ -10,13 +10,14 @@ from pathlib import Path
 
 # 프로젝트 경로 추가 - 상대 임포트 오류 해결
 current_dir = Path(__file__).parent
-sys.path.insert(0, str(current_dir))
+project_root = current_dir.parent.parent  # api/crawlers 디렉토리
+sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(current_dir.parent))
 
 # 이제 임포트
-from baemin_sync_crawler import BaeminSyncCrawler
-from coupang_crawler import CoupangCrawler
-from yogiyo_crawler import YogiyoCrawler
+from api.crawlers.review_crawlers.baemin_sync_crawler import BaeminSyncCrawler
+from api.crawlers.coupang_crawler import CoupangCrawler
+from api.crawlers.yogiyo_crawler import YogiyoCrawler
 
 logging.basicConfig(
     level=logging.INFO,
