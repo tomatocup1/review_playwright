@@ -22,7 +22,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 # 절대 경로로 import
-from api.crawlers.baemin_sync_crawler import BaeminSyncCrawler
+from .baemin_sync_crawler import BaeminSyncCrawler
 
 logger = logging.getLogger(__name__)
 
