@@ -11,7 +11,14 @@ from playwright.async_api import async_playwright, Page, Browser, Playwright
 import logging
 from pathlib import Path
 import nest_asyncio
-from ..utils.error_handler import log_login_error, log_crawling_error, log_reply_error, ErrorType
+
+# error_handler 임포트 - 상대/절대 임포트 처리
+try:
+    from ..utils.error_handler import log_login_error, log_crawling_error, log_reply_error, ErrorType
+except ImportError:
+    # 서브프로세스에서 실행될 때는 에러 핸들러를 사용하지 않음
+    log_login_error = log_crawling_error = log_reply_error = None
+    ErrorType = None
 
 # Windows에서 asyncio 중첩 실행 허용
 nest_asyncio.apply()
