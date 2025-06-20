@@ -13,7 +13,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from api.services.supabase_service import SupabaseService
-from api.crawlers.baemin_review_crawler import BaeminReviewCrawler  # 파일명 확인
+from api.crawlers.review_crawlers.baemin_review_crawler import BaeminReviewCrawler  # 파일명 확인
 from api.crawlers.review_parsers.baemin_review_parser import BaeminReviewParser
 
 logger = logging.getLogger(__name__)
