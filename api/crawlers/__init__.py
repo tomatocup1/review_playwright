@@ -119,7 +119,7 @@ class SubprocessCrawlerWrapper:
             
         try:
             # 크롤러 스크립트 경로
-            crawler_script = Path(__file__).parent / "crawler_subprocess.py"
+            crawler_script = Path(__file__).parent / "store_crawlers" / "crawler_subprocess.py"
             
             if not crawler_script.exists():
                 logger.error(f"크롤러 스크립트를 찾을 수 없습니다: {crawler_script}")
