@@ -18,7 +18,12 @@ except ImportError:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(current_dir)
     sys.path.insert(0, parent_dir)
-    from crawlers.windows_async_crawler import WindowsAsyncBaseCrawler
+    try:
+        from crawlers.review_crawlers.windows_async_crawler import WindowsAsyncBaseCrawler
+    except ImportError:
+        # review_crawlers에서도 찾지 못하면 상위 경로 시도
+        sys.path.insert(0, os.path.dirname(parent_dir))
+        from api.crawlers.review_crawlers.windows_async_crawler import WindowsAsyncBaseCrawler
 
 logger = logging.getLogger(__name__)
 
