@@ -25,10 +25,13 @@ print(f"[DEBUG] api_dir: {api_dir}", file=sys.stderr)
 print(f"[DEBUG] project_root: {project_root}", file=sys.stderr)
 print(f"[DEBUG] sys.path: {sys.path[:3]}", file=sys.stderr)
 
-# 이제 임포트 - review_crawlers에서 직접 임포트
+# 필요한 크롤러만 조건부로 임포트
+# 배민 크롤러는 항상 필요
 from crawlers.review_crawlers.baemin_sync_crawler import BaeminSyncCrawler
-from crawlers.coupang_crawler import CoupangCrawler
-from crawlers.yogiyo_crawler import YogiyoCrawler
+
+# 쿠팡과 요기요는 필요할 때만 임포트
+CoupangCrawler = None
+YogiyoCrawler = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,9 +49,27 @@ async def run_async_crawler(platform, username, password, action, headless):
     crawler = None
     try:
         if platform == 'coupang':
-            crawler = CoupangCrawler(headless=headless)
+            # 쿠팡 크롤러를 필요할 때만 임포트
+            try:
+                from crawlers.coupang_crawler import CoupangCrawler
+                crawler = CoupangCrawler(headless=headless)
+            except ImportError as e:
+                print(json.dumps({
+                    "error": f"Failed to import CoupangCrawler: {str(e)}",
+                    "error_type": "IMPORT_ERROR"
+                }))
+                return
         elif platform == 'yogiyo':
-            crawler = YogiyoCrawler(headless=headless)
+            # 요기요 크롤러를 필요할 때만 임포트
+            try:
+                from crawlers.yogiyo_crawler import YogiyoCrawler
+                crawler = YogiyoCrawler(headless=headless)
+            except ImportError as e:
+                print(json.dumps({
+                    "error": f"Failed to import YogiyoCrawler: {str(e)}",
+                    "error_type": "IMPORT_ERROR"
+                }))
+                return
         else:
             print(json.dumps({
                 "error": f"Invalid async platform: {platform}",
