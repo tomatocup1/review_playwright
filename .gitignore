@@ -66,3 +66,12 @@ Thumbs.db
 
 # Configuration
 config.json
+
+# Browser data
+browser_data/
+
+# Temporary test files
+test_*.py
+
+# Plan files in root directory
+/plan.md
