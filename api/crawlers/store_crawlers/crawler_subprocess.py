@@ -7,6 +7,7 @@ import json
 import logging
 import asyncio
 from pathlib import Path
+from playwright.async_api import async_playwright
 
 # 프로젝트 경로 추가 - 상대 임포트 오류 해결
 current_dir = Path(__file__).parent  # store_crawlers
@@ -29,9 +30,10 @@ print(f"[DEBUG] sys.path: {sys.path[:3]}", file=sys.stderr)
 # 배민 크롤러는 항상 필요
 from crawlers.review_crawlers.baemin_sync_crawler import BaeminSyncCrawler
 
-# 쿠팡과 요기요는 필요할 때만 임포트
+# 쿠팡, 요기요, 네이버는 필요할 때만 임포트
 CoupangCrawler = None
 YogiyoCrawler = None
+NaverCrawler = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,12 +72,24 @@ async def run_async_crawler(platform, username, password, action, headless):
                     "error_type": "IMPORT_ERROR"
                 }))
                 return
+        elif platform == 'naver':
+            # 네이버 크롤러를 필요할 때만 임포트
+            try:
+                from crawlers.naver_crawler import NaverCrawler
+                crawler = NaverCrawler()
+            except ImportError as e:
+                print(json.dumps({
+                    "error": f"Failed to import NaverCrawler: {str(e)}",
+                    "error_type": "IMPORT_ERROR"
+                }))
+                return
         else:
             print(json.dumps({
                 "error": f"Invalid async platform: {platform}",
                 "error_type": "INVALID_PLATFORM"
             }))
             return
+            
         
         # 브라우저 시작 시도
         try:
@@ -129,6 +143,7 @@ async def run_async_crawler(platform, username, password, action, headless):
                     "platform": platform
                 }))
                 return
+            
         else:
             print(json.dumps({
                 "error": f"Unknown action: {action}",
@@ -197,7 +212,67 @@ def main():
                 
             crawler.close_browser()
             
-        elif platform in ['coupang', 'yogiyo']:  # yogiyo 추가
+        elif platform == 'naver':
+            # 네이버는 비동기 크롤러 사용하지만 별도 처리
+            async def run_naver_crawler():
+                from crawlers.naver_crawler import NaverCrawler
+                crawler = NaverCrawler()
+                
+                async with async_playwright() as p:
+                    # 네이버 크롤러의 create_browser_context 메서드 사용
+                    browser, context, page = await crawler.create_browser_context(
+                        p, 
+                        username,  # platform_id
+                        headless=headless
+                    )
+                    
+                    try:
+                        if action == 'get_stores':
+                            # 로그인
+                            login_success = await crawler.login(page, username, password)
+                            if not login_success:
+                                return {
+                                    "error": "Login failed", 
+                                    "error_type": "LOGIN_FAILED",
+                                    "login_success": False,
+                                    "platform": platform
+                                }
+                            
+                            # 매장 목록 가져오기
+                            stores = await crawler.get_stores(page)
+                            
+                            return {
+                                "success": True,
+                                "stores": stores,
+                                "platform": platform,
+                                "login_success": True,
+                                "count": len(stores),
+                                "message": f"성공적으로 {len(stores)}개의 매장을 가져왔습니다."
+                            }
+                        else:
+                            return {
+                                "error": f"Unknown action: {action}",
+                                "error_type": "UNKNOWN_ACTION"
+                            }
+                            
+                    except Exception as e:
+                        import traceback
+                        return {
+                            "error": str(e),
+                            "error_type": "CRAWLER_EXCEPTION",
+                            "platform": platform,
+                            "traceback": traceback.format_exc()
+                        }
+                    finally:
+                        await browser.close()
+            
+            # 비동기 함수 실행
+            result = asyncio.run(run_naver_crawler())
+            
+            # 결과 출력
+            print(json.dumps(result, ensure_ascii=False))
+            
+        elif platform in ['coupang', 'yogiyo']:
             # 쿠팡이츠와 요기요는 비동기 크롤러 사용
             asyncio.run(run_async_crawler(platform, username, password, action, headless))
             

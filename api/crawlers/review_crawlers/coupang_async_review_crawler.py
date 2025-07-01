@@ -70,11 +70,51 @@ class CoupangAsyncReviewCrawler(CoupangCrawler):
             # 미답변 탭 클릭
             try:
                 await self.click_unanswered_tab()
+                logger.info("미답변 탭 처리 완료")
             except Exception as e:
-                logger.error(f"미답변 탭 클릭 실패: {str(e)}")
+                logger.error(f"미답변 탭 클릭 중 예외: {str(e)}")
             
-            # 스크린샷 저장
-            await self.save_review_screenshot("after_navigation")
+            # 페이지에 표시된 리뷰 확인
+            await asyncio.sleep(3)  # UI 렌더링 대기
+            
+            # DOM에서 리뷰 요소 직접 확인
+            review_info = await self.page.evaluate('''() => {
+                const reviewCards = document.querySelectorAll('[class*="review-card"], [class*="ReviewCard"], [class*="review-item"]');
+                const reviewTexts = [];
+                
+                reviewCards.forEach((card, index) => {
+                    const text = card.textContent || '';
+                    const hasReplyButton = !!card.querySelector('button:has-text("답글"), button:has-text("답변")');
+                    reviewTexts.push({
+                        index: index,
+                        textPreview: text.substring(0, 100),
+                        hasReplyButton: hasReplyButton
+                    });
+                });
+                
+                // 리뷰가 없다면 더 넓은 범위로 검색
+                if (reviewTexts.length === 0) {
+                    const allDivs = document.querySelectorAll('div');
+                    allDivs.forEach(div => {
+                        const text = div.textContent || '';
+                        if (text.includes('리뷰') || text.includes('별점') || text.includes('고객')) {
+                            reviewTexts.push({
+                                className: div.className,
+                                textPreview: text.substring(0, 50)
+                            });
+                        }
+                    });
+                }
+                
+                return {
+                    reviewCount: reviewCards.length,
+                    reviews: reviewTexts.slice(0, 5),  // 처음 5개만
+                    pageText: document.body.textContent.includes('리뷰가 없습니다') || 
+                              document.body.textContent.includes('표시할 리뷰가 없습니다')
+                };
+            }''')
+            
+            logger.info(f"DOM 리뷰 정보: {json.dumps(review_info, ensure_ascii=False, indent=2)}")
             
             logger.info("========== 리뷰 페이지 이동 완료 ==========")
             return True
@@ -137,73 +177,61 @@ class CoupangAsyncReviewCrawler(CoupangCrawler):
         try:
             logger.info("미답변 탭 클릭 시도")
             
-            # 방법 1: 버튼 태그와 텍스트로 찾기
-            try:
-                unanswered_button = await self.page.query_selector('button:has-text("미답변")')
-                if unanswered_button:
-                    await unanswered_button.click()
-                    logger.info("미답변 탭 클릭 완료 (button)")
-                    await asyncio.sleep(2)
-                    return
-            except Exception as e:
-                logger.debug(f"button 태그로 찾기 실패: {str(e)}")
+            # 미답변 탭 클릭
+            await self.page.click('text=미답변', timeout=5000)
+            logger.info("미답변 탭 클릭 완료!")
             
-            # 방법 2: div 태그와 텍스트로 찾기
-            try:
-                unanswered_div = await self.page.query_selector('div:has-text("미답변")')
-                if unanswered_div:
-                    await unanswered_div.click()
-                    logger.info("미답변 탭 클릭 완료 (div)")
-                    await asyncio.sleep(2)
-                    return
-            except Exception as e:
-                logger.debug(f"div 태그로 찾기 실패: {str(e)}")
+            # 클릭 후 페이지 업데이트 대기
+            await asyncio.sleep(3)
             
-            # 방법 3: JavaScript로 직접 클릭
-            try:
-                await self.page.evaluate('''
-                    const elements = document.querySelectorAll('*');
-                    for (const element of elements) {
-                        if (element.textContent && element.textContent.trim() === '미답변') {
-                            // 부모 요소가 클릭 가능한지 확인
-                            let clickTarget = element;
-                            while (clickTarget && !clickTarget.onclick && !clickTarget.getAttribute('role')) {
-                                clickTarget = clickTarget.parentElement;
-                            }
-                            if (clickTarget) {
-                                clickTarget.click();
-                                console.log('미답변 탭 클릭 성공');
-                            } else {
-                                element.click();
-                            }
-                            break;
-                        }
+            # 미답변 탭 활성화 확인
+            is_active = await self.page.evaluate('''() => {
+                const divs = document.querySelectorAll('div.e1fz5w2d5');
+                for (const div of divs) {
+                    const span = div.querySelector('span');
+                    if (span && span.textContent === '미답변') {
+                        return div.className.includes('css-183zt73');
                     }
-                ''')
-                logger.info("미답변 탭 클릭 완료 (JavaScript)")
-            except Exception as e:
-                logger.warning(f"JavaScript 클릭 실패: {str(e)}")
+                }
+                return false;
+            }''')
             
-            await asyncio.sleep(2)
+            if is_active:
+                logger.info("미답변 탭 활성화 확인!")
+                
+                # 페이지에 표시된 요소 개수 확인
+                element_counts = await self.page.evaluate('''() => {
+                    return {
+                        reviews: document.querySelectorAll('[class*="review"]').length,
+                        buttons: document.querySelectorAll('button').length,
+                        divs: document.querySelectorAll('div[class*="css-"]').length
+                    };
+                }''')
+                
+                logger.info(f"페이지 요소 개수: {element_counts}")
+            else:
+                logger.warning("미답변 탭 활성화 확인 실패")
             
-            # 클릭 후 스크린샷 저장
-            await self.save_review_screenshot("after_unanswered_tab_click")
+            return True
             
-            except Exception as e:
-            logger.error(f"미답변 탭 클릭 중 오류: {str(e)}")
+        except Exception as e:
+            logger.error(f"미답변 탭 클릭 실패: {str(e)}")
+            return True
 
     async def save_review_screenshot(self, name: str):
         """리뷰 관련 스크린샷 저장"""
         if not self.page:
+            logger.warning("페이지 객체가 없어 스크린샷을 저장할 수 없습니다")
             return
             
         try:
+            logger.info(f"스크린샷 저장 시작: {name}")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{name}_{timestamp}.png"
             filepath = self.review_screenshot_dir / filename
             
             await self.page.screenshot(path=str(filepath))
-            logger.info(f"리뷰 스크린샷 저장: {filepath}")
+            logger.info(f"리뷰 스크린샷 저장 완료: {filepath}")
             
         except Exception as e:
             logger.error(f"리뷰 스크린샷 저장 실패: {str(e)}")
@@ -226,27 +254,54 @@ class CoupangAsyncReviewCrawler(CoupangCrawler):
     async def has_next_page(self) -> bool:
         """다음 페이지 존재 여부 확인"""
         try:
-            next_button = await self.page.query_selector('button.pagination-btn.next-btn')
-            if next_button:
-                # hide-btn 클래스가 없으면 다음 페이지 존재
-                classes = await next_button.get_attribute('class')
-                return 'hide-btn' not in classes
+            # 페이지네이션 영역에서 다음 버튼 확인
+            has_next = await self.page.evaluate('''() => {
+                const containers = document.querySelectorAll('div[class*="css-"]');
+                for (const container of containers) {
+                    const buttons = container.querySelectorAll('button');
+                    if (buttons.length >= 3) {  // 페이지네이션 버튼들
+                        const lastButton = buttons[buttons.length - 1];
+                        if (lastButton && lastButton.querySelector('svg')) {
+                            return !lastButton.disabled;
+                        }
+                    }
+                }
+                return false;
+            }''')
+            
+            return has_next
+            
+        except Exception as e:
+            logger.error(f"다음 페이지 확인 실패: {str(e)}")
             return False
-        except:
-            return False
-    
+
     async def go_to_next_page(self) -> bool:
         """다음 페이지로 이동"""
         try:
-            if await self.has_next_page():
-                next_button = await self.page.query_selector('button.pagination-btn.next-btn')
-                if next_button:
-                    await next_button.click()
-                    await asyncio.sleep(2)
-                    current_page = await self.get_current_page_number()
-                    logger.info(f"다음 페이지로 이동: {current_page}")
-                    return True
-            return False
+            # JavaScript로 다음 페이지 버튼 클릭
+            clicked = await self.page.evaluate('''() => {
+                const containers = document.querySelectorAll('div[class*="css-"]');
+                for (const container of containers) {
+                    const buttons = container.querySelectorAll('button');
+                    if (buttons.length >= 3) {  // 페이지네이션 버튼들
+                        const lastButton = buttons[buttons.length - 1];
+                        if (lastButton && lastButton.querySelector('svg') && !lastButton.disabled) {
+                            lastButton.click();
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }''')
+            
+            if clicked:
+                logger.info("다음 페이지 버튼 클릭 성공")
+                await asyncio.sleep(2)
+                return True
+            else:
+                logger.warning("다음 페이지 버튼을 찾을 수 없습니다")
+                return False
+                
         except Exception as e:
             logger.error(f"페이지 이동 실패: {str(e)}")
             return False
@@ -259,260 +314,194 @@ class CoupangAsyncReviewCrawler(CoupangCrawler):
             logger.info(f"매장명: {store_name}")
             logger.info(f"최대 수집 개수: {limit}")
             
-            # 수집된 리뷰를 저장할 리스트
+            # 수집된 리뷰를 저장할 리스트와 중복 확인용 Set
             all_collected_reviews = []
+            collected_review_ids = set()  # 중복 체크용
             api_responses_received = 0
+            current_page = 1
+            total_pages = 1
             
-            # 모든 네트워크 요청을 로깅하는 핸들러 추가 (디버그용)
-            def log_all_requests(request):
-                if 'api' in request.url or 'review' in request.url.lower():
-                    logger.debug(f"[REQUEST] {request.method} {request.url}")
+            # 미답변 탭 클릭 후에만 수집하도록 플래그 추가
+            start_collecting = False
             
             # 네트워크 응답 핸들러
-            def handle_response(response):
-                nonlocal all_collected_reviews, api_responses_received
+            async def handle_response_async(response):
+                nonlocal all_collected_reviews, collected_review_ids, api_responses_received, total_pages, start_collecting
                 
-                logger.debug(f"[RESPONSE] {response.status} {response.url}")
-                
-                # API URL 패턴을 더 넓게 확인
-                if (("review" in response.url.lower() or 
-                    "api" in response.url.lower() or
-                    "merchant" in response.url.lower()) and 
-                    response.status == 200):
+                # 리뷰 API 응답만 처리
+                if response.status == 200 and '/api/v1/merchant/reviews/search' in response.url:
+                    # 미답변 탭 클릭 후의 응답만 처리
+                    if not start_collecting:
+                        logger.info(f"[스킵] 미답변 탭 클릭 전 응답 무시")
+                        return
+                        
                     try:
-                        # content-type 확인
                         content_type = response.headers.get('content-type', '')
                         if 'application/json' in content_type:
-                            # 동기적으로 JSON 파싱
-                            import asyncio
-                            loop = asyncio.get_event_loop()
-                            future = asyncio.ensure_future(response.json())
-                            data = loop.run_until_complete(future)
+                            data = await response.json()
                             
-                            logger.info(f"JSON API 응답 수신: {response.url}")
-                            logger.debug(f"응답 데이터 구조: {list(data.keys()) if isinstance(data, dict) else type(data)}")
-                            
-                            # 다양한 형태의 리뷰 데이터 구조 확인
-                            reviews_list = None
-                            
-                            # 패턴 1: data.list (쿠팡이츠 기본)
-                            if isinstance(data, dict) and "data" in data and isinstance(data["data"], dict):
-                                if "list" in data["data"]:
-                                    reviews_list = data["data"]["list"]
-                                elif "reviews" in data["data"]:
-                                    reviews_list = data["data"]["reviews"]
-                                elif "items" in data["data"]:
-                                    reviews_list = data["data"]["items"]
-                            # 패턴 2: reviews 직접
-                            elif isinstance(data, dict) and "reviews" in data:
-                                reviews_list = data["reviews"]
-                            # 패턴 3: items
-                            elif isinstance(data, dict) and "items" in data:
-                                reviews_list = data["items"]
-                            # 패턴 4: result.data
-                            elif isinstance(data, dict) and "result" in data and isinstance(data["result"], dict):
-                                if "data" in data["result"]:
-                                    reviews_list = data["result"]["data"]
-                            # 패턴 5: 리스트 직접 반환
-                            elif isinstance(data, list):
-                                reviews_list = data
-                            
-                            if reviews_list:
-                                api_responses_received += 1
-                                logger.info(f"리뷰 리스트 발견: {len(reviews_list)}개")
-                                
-                                # 첫 번째 리뷰의 구조 확인
-                                if reviews_list and len(reviews_list) > 0:
-                                    logger.debug(f"첫 번째 리뷰 키: {list(reviews_list[0].keys())}")
-                                
-                                current_page_num = loop.run_until_complete(self.get_current_page_number())
-                                logger.info(f"페이지 {current_page_num}에서 {len(reviews_list)}개 리뷰 처리")
-                                
-                                for idx, review in enumerate(reviews_list):
-                                    try:
-                                        # orderReviewId 추출 - 다양한 키 이름 확인
-                                        order_review_id = str(
-                                            review.get("orderReviewId", "") or 
-                                            review.get("reviewId", "") or 
-                                            review.get("id", "") or 
-                                            review.get("review_id", "")
-                                        )
-                                        
-                                        if not order_review_id:
-                                            logger.warning(f"리뷰 ID를 찾을 수 없습니다: {list(review.keys())}")
-                                            continue
-                                        
-                                        # 날짜 형식 변환
-                                        created_at = (
-                                            review.get("createdAt", "") or 
-                                            review.get("created_at", "") or 
-                                            review.get("writeDate", "") or
-                                            review.get("reviewDate", "")
-                                        )
-                                        if created_at:
-                                            # "2025-06-07T15:30:00" -> "2025-06-07"
-                                            if "T" in str(created_at):
+                            if 'data' in data and isinstance(data['data'], dict):
+                                if 'content' in data['data']:
+                                    reviews_list = data['data']['content']
+                                    page_info = {
+                                        'pageNumber': data['data'].get('pageNumber', 1),
+                                        'pageSize': data['data'].get('pageSize', 5),
+                                        'total': data['data'].get('total', 0)
+                                    }
+                                    
+                                    # 총 페이지 수 계산
+                                    if page_info['pageSize'] > 0:
+                                        total_pages = (page_info['total'] + page_info['pageSize'] - 1) // page_info['pageSize']
+                                    
+                                    logger.info(f"페이지 {page_info['pageNumber']}/{total_pages} - {len(reviews_list)}개 리뷰 발견")
+                                    api_responses_received += 1
+                                    
+                                    for review in reviews_list:
+                                        try:
+                                            order_review_id = str(review.get("orderReviewId", ""))
+                                            
+                                            # 중복 체크
+                                            if order_review_id in collected_review_ids:
+                                                logger.debug(f"중복 리뷰 스킵: {order_review_id}")
+                                                continue
+                                            
+                                            collected_review_ids.add(order_review_id)
+                                            
+                                            # 리뷰 데이터 파싱
+                                            created_at = review.get("createdAt", "")
+                                            if created_at and "T" in str(created_at):
                                                 review_date = str(created_at).split("T")[0]
                                             else:
-                                                review_date = str(created_at)[:10]  # YYYY-MM-DD 형식 추출
-                                        else:
-                                            review_date = datetime.now().strftime("%Y-%m-%d")
-                                        
-                                        # 주문 메뉴 추출
-                                        order_items = review.get("orderItems", []) or review.get("menus", [])
-                                        if isinstance(order_items, list):
+                                                review_date = datetime.now().strftime("%Y-%m-%d")
+                                            
+                                            order_info = review.get("orderInfo", [])
                                             ordered_menu = ", ".join([
-                                                item.get("menuName", "") or item.get("name", "") 
-                                                for item in order_items 
+                                                item.get("dishName", "") 
+                                                for item in order_info 
                                                 if isinstance(item, dict)
                                             ])
-                                        else:
-                                            ordered_menu = review.get("menuName", "") or review.get("menu", "")
-                                        
-                                        # 이미지 URL 추출
-                                        review_images = review.get("reviewImages", []) or review.get("images", [])
-                                        if isinstance(review_images, list):
-                                            image_urls = []
-                                            for img in review_images:
-                                                if isinstance(img, dict):
-                                                    url = img.get("imageUrl", "") or img.get("url", "")
-                                                    if url:
-                                                        image_urls.append(url)
-                                                elif isinstance(img, str):
-                                                    image_urls.append(img)
-                                        else:
-                                            image_urls = []
-                                        
-                                        # 답글 여부 확인
-                                        has_reply = (
-                                            review.get("hasReply", False) or 
-                                            review.get("has_reply", False) or 
-                                            bool(review.get("reply", "")) or
-                                            bool(review.get("replyContent", ""))
-                                        )
-                                        
-                                        # 리뷰 내용 추출
-                                        review_content = (
-                                            review.get("reviewText", "") or 
-                                            review.get("review_text", "") or 
-                                            review.get("content", "") or
-                                            review.get("comment", "")
-                                        )
-                                        
-                                        # 리뷰 데이터 생성
-                                        review_data = {
-                                            'review_id': self.generate_review_id('coupang', order_review_id),
-                                            'original_id': order_review_id,  # 쿠팡이츠 원본 ID
-                                            'platform': 'coupang',
-                                            'platform_code': platform_code,
-                                            'store_code': store_code,
-                                            'review_name': (
-                                                review.get("customerNickname", "") or 
-                                                review.get("customer_nickname", "") or 
-                                                review.get("nickname", "") or
-                                                review.get("writer", "") or
-                                                "익명"
-                                            ),
-                                            'rating': int(
-                                                review.get("rating", 5) or 
-                                                review.get("score", 5) or 
-                                                review.get("star", 5)
-                                            ),
-                                            'review_content': review_content,
-                                            'review_date': review_date,
-                                            'ordered_menu': ordered_menu,
-                                            'review_images': image_urls,
-                                            'delivery_review': review.get("deliveryReview", ""),
-                                            'has_reply': has_reply,
-                                            'writableComment': not has_reply
-                                        }
-                                        
-                                        all_collected_reviews.append(review_data)
-                                        logger.debug(f"리뷰 수집: {order_review_id} - {review_data['review_name']}")
-                                        
-                                        if len(all_collected_reviews) >= limit:
-                                            logger.info(f"수집 한도 {limit}개 도달")
-                                            return
                                             
-                                    except Exception as e:
-                                        logger.error(f"리뷰 파싱 중 오류: {str(e)}")
-                                        logger.debug(f"문제가 된 리뷰 데이터: {json.dumps(review, ensure_ascii=False)[:200]}")
-                                        continue
-                            else:
-                                # 리뷰 데이터를 찾지 못한 경우 전체 구조 로깅
-                                logger.debug(f"리뷰 데이터를 찾을 수 없음. 전체 키: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
-                                        
+                                            review_images = review.get("images", [])
+                                            image_urls = []
+                                            if isinstance(review_images, list):
+                                                for img in review_images:
+                                                    if isinstance(img, str):
+                                                        image_urls.append(img)
+                                            
+                                            replies = review.get("replies", [])
+                                            has_reply = len(replies) > 0
+                                            
+                                            review_data = {
+                                                'review_id': self.generate_review_id('coupang', order_review_id),
+                                                'original_id': order_review_id,
+                                                'platform': 'coupang',
+                                                'platform_code': platform_code,
+                                                'store_code': store_code,
+                                                'review_name': review.get("customerName", "익명"),
+                                                'rating': int(review.get("rating", 5)),
+                                                'review_content': review.get("comment", ""),
+                                                'review_date': review_date,
+                                                'ordered_menu': ordered_menu,
+                                                'review_images': image_urls,
+                                                'delivery_review': "",
+                                                'has_reply': has_reply,
+                                                'writableComment': not has_reply
+                                            }
+                                            
+                                            all_collected_reviews.append(review_data)
+                                            logger.info(f"리뷰 수집 [{len(all_collected_reviews)}]: {order_review_id} - {review_data['review_name']}")
+                                            
+                                            # 수집 한도 확인
+                                            if len(all_collected_reviews) >= limit:
+                                                logger.info(f"수집 한도 {limit}개 도달")
+                                                return
+                                                
+                                        except Exception as e:
+                                            logger.error(f"리뷰 파싱 중 오류: {str(e)}")
+                                            continue
+                                            
                     except Exception as e:
                         logger.error(f"API 응답 처리 중 오류: {str(e)}")
-                        logger.debug(f"오류 발생 URL: {response.url}")
+            
+            # 비동기 핸들러를 동기 핸들러로 래핑
+            def handle_response(response):
+                asyncio.create_task(handle_response_async(response))
             
             # 리스너 등록
-            self.page.on("request", log_all_requests)
             self.page.on("response", handle_response)
             
             try:
-                # 리뷰 페이지로 이동
+                # 리뷰 페이지로 이동 (미답변 탭 클릭 포함)
                 if not await self.navigate_to_reviews(store_name):
                     logger.error("리뷰 페이지 이동 실패")
                     return []
                 
-                # 첫 페이지 데이터 수집을 위해 잠시 대기
-                await asyncio.sleep(3)
+                # 미답변 탭 클릭 후부터 수집 시작
+                start_collecting = True
+                logger.info("미답변 탭 활성화 - 리뷰 수집 시작")
                 
-                # API 호출이 없었다면 수동으로 트리거 시도
+                # 첫 페이지 API 응답 대기 (중요!)
+                logger.info("첫 페이지 리뷰 로딩 대기 중...")
+                wait_count = 0
+                while api_responses_received == 0 and wait_count < 10:
+                    await asyncio.sleep(0.5)
+                    wait_count += 1
+                
                 if api_responses_received == 0:
-                    logger.info("API 응답이 없어 페이지 새로고침 시도")
-                    await self.page.reload()
-                    await asyncio.sleep(3)
+                    logger.warning("첫 페이지 API 응답 없음 - 페이지 새로고침 시도")
+                    # 조회 버튼 재클릭
+                    search_button = await self.page.query_selector('button:has-text("조회")')
+                    if search_button:
+                        await search_button.click()
+                        logger.info("조회 버튼 재클릭 완료")
+                        await asyncio.sleep(3)
                 
                 # 페이지네이션 처리
                 page_count = 0
-                max_pages = 20  # 무한 루프 방지
+                max_pages = min(total_pages, 20)  # 최대 20페이지까지만
                 
                 while len(all_collected_reviews) < limit and page_count < max_pages:
                     page_count += 1
-                    current_page = await self.get_current_page_number()
-                    logger.info(f"현재 페이지: {current_page} (처리 {page_count}/{max_pages})")
+                    logger.info(f"페이지 {page_count}/{max_pages} 처리 중...")
                     
-                    # 현재 페이지 스크린샷
-                    await self.save_review_screenshot(f"page_{current_page}")
-                    
-                    # API 응답 대기
-                    await asyncio.sleep(2)
-                    
-                    # 리뷰가 수집되지 않았다면 더 기다려보기
-                    if len(all_collected_reviews) == 0 and page_count == 1:
-                        logger.info("첫 페이지에서 리뷰를 찾지 못해 추가 대기")
-                        await asyncio.sleep(3)
-                    
-                    # 다음 페이지가 있고 아직 한도에 도달하지 않은 경우
-                    if await self.has_next_page():
-                        if not await self.go_to_next_page():
+                    # 첫 페이지는 이미 로드됨
+                    if page_count == 1:
+                        # 첫 페이지 데이터가 수집되었는지 확인
+                        await asyncio.sleep(1)
+                        if len(all_collected_reviews) == 0:
+                            logger.warning("첫 페이지에서 리뷰를 찾지 못함")
+                    else:
+                        # 다음 페이지 존재 확인 및 이동
+                        if await self.has_next_page():
+                            if await self.go_to_next_page():
+                                logger.info(f"페이지 {page_count}로 이동 완료")
+                                # 페이지 로드 대기
+                                await asyncio.sleep(3)
+                            else:
+                                logger.info("페이지 이동 실패")
+                                break
+                        else:
                             logger.info("더 이상 페이지가 없습니다")
                             break
-                        # 페이지 이동 후 API 응답 대기
-                        await asyncio.sleep(3)
-                    else:
-                        logger.info("마지막 페이지입니다")
-                        break
                 
                 logger.info(f"\n========== 총 {len(all_collected_reviews)}개의 리뷰 수집 완료 ==========")
                 
                 # 수집된 리뷰 요약
                 if all_collected_reviews:
                     logger.info("\n수집된 리뷰 요약:")
-                    for i, review in enumerate(all_collected_reviews[:5]):
+                    for i, review in enumerate(all_collected_reviews[:10]):
                         logger.info(f"  {i+1}. [{review['original_id']}] {review['review_name']} - {review['rating']}점")
-                        logger.info(f"     날짜: {review['review_date']}")
-                        logger.info(f"     내용: {review['review_content'][:50]}...")
+                        if review['review_content']:
+                            logger.info(f"     내용: {review['review_content'][:50]}...")
+                    if len(all_collected_reviews) > 10:
+                        logger.info(f"  ... 외 {len(all_collected_reviews) - 10}개")
                 else:
-                    logger.warning("수집된 리뷰가 없습니다. API 응답을 확인해주세요.")
+                    logger.warning("수집된 리뷰가 없습니다.")
                 
                 return all_collected_reviews
                 
             finally:
                 # 리스너 제거
-                self.page.remove_listener("request", log_all_requests)
                 self.page.remove_listener("response", handle_response)
                 
         except Exception as e:

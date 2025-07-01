@@ -12,7 +12,7 @@ import os
 
 # 상대 임포트 오류 해결
 try:
-    from .windows_async_crawler import WindowsAsyncBaseCrawler
+    from .review_crawlers.windows_async_crawler import WindowsAsyncBaseCrawler
 except ImportError:
     # 직접 실행할 때를 위한 처리
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -114,7 +114,6 @@ class CoupangCrawler(WindowsAsyncBaseCrawler):
             if 'store.coupangeats.com/merchant' in current_url and 'login' not in current_url:
                 self.logged_in = True
                 logger.info("쿠팡이츠 로그인 성공")
-                await self.save_screenshot("login_success")
                 return True
             else:
                 logger.error("쿠팡이츠 로그인 실패")

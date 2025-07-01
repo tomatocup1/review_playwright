@@ -44,7 +44,13 @@ async def submit_reply_to_platform(
                 status_code=404, 
                 detail=f"리뷰 정보를 찾을 수 없습니다. (review_id: {review_id})"
             )
-        
+        # 플랫폼 검증 추가
+        platform = review.get('platform', '').lower()
+        if platform not in ['baemin', 'coupang', 'yogiyo', 'naver']:
+            raise HTTPException(
+                status_code=400,
+                detail=f"지원하지 않는 플랫폼입니다: {platform}"
+            )
         # 이미 답글이 등록되었는지 확인
         if review.get('response_status') == 'posted':
             logger.warning(f"이미 답글이 등록된 리뷰입니다: review_id={review_id}")

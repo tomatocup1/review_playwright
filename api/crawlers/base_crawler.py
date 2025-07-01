@@ -10,7 +10,6 @@ import sys
 from playwright.async_api import async_playwright, Page, Browser, Playwright
 import logging
 from pathlib import Path
-import nest_asyncio
 
 # error_handler 임포트 - 상대/절대 임포트 처리
 try:
@@ -19,14 +18,6 @@ except ImportError:
     # 서브프로세스에서 실행될 때는 에러 핸들러를 사용하지 않음
     log_login_error = log_crawling_error = log_reply_error = None
     ErrorType = None
-
-# Windows에서 asyncio 중첩 실행 허용
-nest_asyncio.apply()
-
-# Windows 전용 설정
-if sys.platform == 'win32':
-    # ProactorEventLoop 대신 SelectorEventLoop 사용
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -61,15 +52,7 @@ class BaseCrawler(ABC):
     async def start_browser(self):
         """브라우저 시작"""
         try:
-            # Windows에서 안정적인 실행을 위해 이벤트 루프 확인
-            try:
-                loop = asyncio.get_running_loop()
-                if sys.platform == 'win32' and isinstance(loop, asyncio.ProactorEventLoop):
-                    logger.warning("ProactorEventLoop detected, switching to SelectorEventLoop")
-                    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-            except:
-                pass
-            
+            # Playwright 시작
             self.playwright = await async_playwright().start()
             
             # 브라우저 실행 옵션
@@ -80,7 +63,9 @@ class BaseCrawler(ABC):
                     '--disable-dev-shm-usage',
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
-                    '--disable-gpu'
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process'
                 ]
             }
             
@@ -92,11 +77,12 @@ class BaseCrawler(ABC):
             
             self.browser = await self.playwright.chromium.launch(**launch_options)
             
-            # 브라우저 컨텍스트 생성 (더 안정적)
+            # 브라우저 컨텍스트 생성
             context = await self.browser.new_context(
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 viewport={'width': 1920, 'height': 1080},
-                ignore_https_errors=True
+                ignore_https_errors=True,
+                java_script_enabled=True
             )
             
             self.page = await context.new_page()
@@ -107,6 +93,7 @@ class BaseCrawler(ABC):
             logger.info(f"{self.platform_name} 브라우저 시작 완료")
         except Exception as e:
             logger.error(f"브라우저 시작 실패: {str(e)}")
+            logger.error(f"Error type: {type(e).__name__}")
             # 실패 시 정리
             await self.close_browser()
             raise

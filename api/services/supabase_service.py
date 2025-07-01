@@ -62,6 +62,8 @@ class SupabaseService:
     async def check_user_permission(self, user_code: str, store_code: str, action: str) -> bool:
         """사용자 권한 확인"""
         try:
+            logger.debug(f"권한 확인 - user_code: {user_code}, store_code: {store_code}, action: {action}")
+            
             # 매장 소유자인지 확인
             response = await self._execute_query(
                 self.client.table('platform_reply_rules')
@@ -69,10 +71,13 @@ class SupabaseService:
                 .eq('store_code', store_code)
             )
             
+            logger.debug(f"매장 소유자 조회 결과: {response.data}")
+            
             if response.data and response.data[0]['owner_user_code'] == user_code:
+                logger.debug(f"매장 소유자 확인됨: {user_code}")
                 return True
             
-            # 권한 테이블에서 확인
+            # 권한 테이블 확인
             response = await self._execute_query(
                 self.client.table('user_store_permissions')
                 .select('*')
@@ -81,12 +86,15 @@ class SupabaseService:
                 .eq('is_active', True)
             )
             
+            logger.debug(f"권한 테이블 조회 결과: {response.data}")
+            
             if response.data:
                 permission = response.data[0]
                 # 만료일 확인
                 if permission.get('expires_at'):
                     expires_at = datetime.fromisoformat(permission['expires_at'].replace('Z', '+00:00'))
                     if expires_at < datetime.now():
+                        logger.debug(f"권한 만료됨: {expires_at}")
                         return False
                 
                 # 액션별 권한 확인
@@ -97,13 +105,57 @@ class SupabaseService:
                     'manage_rules': 'can_manage_rules'
                 }
                 
-                return permission.get(permission_map.get(action, 'can_view'), False)
+                has_permission = permission.get(permission_map.get(action, 'can_view'), False)
+                logger.debug(f"권한 확인 결과: {has_permission}")
+                return has_permission
             
+            logger.debug("권한 없음")
             return False
             
         except Exception as e:
             logger.error(f"권한 확인 오류: {e}")
             return False
+        
+    async def debug_store_reviews(self, store_code: str) -> Dict:
+        """매장 리뷰 디버깅 정보"""
+        try:
+            debug_info = {}
+            
+            # 1. 매장 정보 확인
+            store_query = self.client.table('platform_reply_rules').select('*').eq('store_code', store_code)
+            store_response = await self._execute_query(store_query)
+            debug_info['store_info'] = store_response.data
+            
+            # 2. 전체 리뷰 수 (조건 없이)
+            all_reviews_query = self.client.table('reviews').select('*', count='exact').eq('store_code', store_code)
+            all_reviews_response = await self._execute_query(all_reviews_query)
+            debug_info['total_reviews'] = all_reviews_response.count
+            
+            # 3. 플랫폼별 리뷰 수
+            platforms = ['naver', 'baemin', 'coupang', 'yogiyo']
+            platform_counts = {}
+            for platform in platforms:
+                platform_query = self.client.table('reviews').select('*', count='exact').eq('store_code', store_code).eq('platform', platform)
+                platform_response = await self._execute_query(platform_query)
+                platform_counts[platform] = platform_response.count
+            debug_info['platform_counts'] = platform_counts
+            
+            # 4. is_deleted 상태별 수
+            deleted_query = self.client.table('reviews').select('*', count='exact').eq('store_code', store_code).eq('is_deleted', True)
+            deleted_response = await self._execute_query(deleted_query)
+            debug_info['deleted_count'] = deleted_response.count
+            
+            # 5. 최근 네이버 리뷰 샘플 (5개)
+            naver_sample_query = self.client.table('reviews').select('review_id, platform, rating, review_date, is_deleted, created_at').eq('store_code', store_code).eq('platform', 'naver').order('created_at', desc=True).limit(5)
+            naver_sample_response = await self._execute_query(naver_sample_query)
+            debug_info['naver_samples'] = naver_sample_response.data
+            
+            logger.info(f"디버그 정보: {debug_info}")
+            return debug_info
+            
+        except Exception as e:
+            logger.error(f"디버그 조회 오류: {e}")
+            return {'error': str(e)}
     
     async def get_reviews_by_store(
         self, 
@@ -115,16 +167,34 @@ class SupabaseService:
     ) -> List[Dict[str, Any]]:
         """매장별 리뷰 조회"""
         try:
+            logger.debug(f"리뷰 조회 시작 - store_code: {store_code}, status: {status}, rating: {rating}")
+            
+            # 먼저 전체 리뷰 개수 확인 (디버깅용)
+            count_query = self.client.table('reviews').select('*', count='exact').eq('store_code', store_code)
+            count_response = await self._execute_query(count_query)
+            logger.debug(f"매장 {store_code}의 전체 리뷰 수: {count_response.count}")
+            
+            # 실제 쿼리 구성
             query = self.client.table('reviews').select('*').eq('store_code', store_code)
             
             if status:
                 query = query.eq('response_status', status)
+                logger.debug(f"상태 필터 적용: {status}")
             
             if rating:
                 query = query.eq('rating', rating)
+                logger.debug(f"별점 필터 적용: {rating}")
             
-            # 삭제되지 않은 리뷰만
-            query = query.eq('is_deleted', False)
+            # 삭제되지 않은 리뷰만 - 이 조건을 일시적으로 제거하여 테스트
+            # query = query.eq('is_deleted', False)
+            
+            # is_deleted 조건 분리하여 디버깅
+            deleted_check_query = self.client.table('reviews').select('*').eq('store_code', store_code).eq('is_deleted', True)
+            deleted_response = await self._execute_query(deleted_check_query)
+            logger.debug(f"삭제된 리뷰 수: {len(deleted_response.data or [])}")
+            
+            # 삭제되지 않은 리뷰만 조회
+            query = query.or_('is_deleted.is.null,is_deleted.eq.false')
             
             # 최신순 정렬
             query = query.order('created_at', desc=True)
@@ -133,55 +203,81 @@ class SupabaseService:
             query = query.range(offset, offset + limit - 1)
             
             response = await self._execute_query(query)
+            
+            logger.debug(f"리뷰 조회 결과: {len(response.data or [])}개")
+            if response.data:
+                logger.debug(f"첫 번째 리뷰 샘플: {response.data[0]}")
+            
             return response.data or []
             
         except Exception as e:
             logger.error(f"리뷰 조회 오류: {e}")
+            logger.exception("상세 오류:")
             return []
     
-    async def get_review_stats(self, store_code: str) -> Dict[str, Any]:
-        """매장 리뷰 통계 조회"""
+    async def get_review_stats(self, store_code: str, start_date: Optional[datetime] = None) -> Dict[str, Any]:
+        """리뷰 통계 조회"""
         try:
-            # 전체 리뷰 조회 (최근 30일)
-            thirty_days_ago = datetime.now() - timedelta(days=30)
+            if not start_date:
+                start_date = datetime.now() - timedelta(days=30)
             
-            response = await self._execute_query(
-                self.client.table('reviews')
-                .select('*')
-                .eq('store_code', store_code)
-                .eq('is_deleted', False)
-                .gte('created_at', thirty_days_ago.isoformat())
-            )
+            # 전체 리뷰 조회
+            reviews_response = self.client.table('reviews').select('*').eq(
+                'store_code', store_code
+            ).gte('created_at', start_date.isoformat()).execute()
             
-            reviews = response.data or []
+            reviews = reviews_response.data
+            total_count = len(reviews)
             
-            # 통계 계산
-            total_reviews = len(reviews)
-            total_rating = sum(review.get('rating', 0) for review in reviews)
-            avg_rating = round(total_rating / total_reviews, 1) if total_reviews > 0 else 0.0
+            # 답글 관련 통계
+            replied_count = len([r for r in reviews if r.get('response_status') == 'posted'])
+            pending_count = len([r for r in reviews if r.get('response_status') in ['pending', 'generated', 'ready_to_post']])
+            failed_count = len([r for r in reviews if r.get('response_status') == 'failed'])
             
-            # 답변 관련 통계
-            replied_reviews = [r for r in reviews if r.get('response_status') == 'posted']
-            reply_rate = round((len(replied_reviews) / total_reviews) * 100, 1) if total_reviews > 0 else 0.0
+            # 별점별 통계 (rating이 None인 경우 처리)
+            rating_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+            for review in reviews:
+                rating = review.get('rating')
+                if rating and isinstance(rating, (int, float)) and 1 <= rating <= 5:
+                    rating_counts[int(rating)] += 1
             
-            pending_reviews = [r for r in reviews if r.get('response_status') == 'pending']
+            # 평균 별점 계산 (rating이 있는 리뷰만)
+            ratings = [r.get('rating') for r in reviews if r.get('rating') is not None]
+            avg_rating = sum(ratings) / len(ratings) if ratings else 0
+            
+            # 플랫폼별 통계
+            platform_counts = {}
+            for review in reviews:
+                platform = review.get('platform', 'unknown')
+                platform_counts[platform] = platform_counts.get(platform, 0) + 1
             
             return {
-                'total_reviews': total_reviews,
-                'avg_rating': avg_rating,
-                'reply_rate': reply_rate,
-                'pending_reviews': len(pending_reviews),
-                'replied_reviews': len(replied_reviews)
+                'total_reviews': total_count,
+                'replied_reviews': replied_count,
+                'pending_reviews': pending_count,
+                'failed_reviews': failed_count,
+                'reply_rate': round((replied_count / total_count * 100) if total_count > 0 else 0, 2),
+                'average_rating': round(avg_rating, 2),
+                'rating_distribution': rating_counts,
+                'platform_distribution': platform_counts,
+                'period_start': start_date.isoformat(),
+                'period_end': datetime.now().isoformat()
             }
             
         except Exception as e:
-            logger.error(f"리뷰 통계 조회 오류: {e}")
+            self.logger.error(f"리뷰 통계 조회 오류: {str(e)}")
+            # 오류 발생 시 기본값 반환
             return {
                 'total_reviews': 0,
-                'avg_rating': 0.0,
-                'reply_rate': 0.0,
+                'replied_reviews': 0,
                 'pending_reviews': 0,
-                'replied_reviews': 0
+                'failed_reviews': 0,
+                'reply_rate': 0,
+                'average_rating': 0,
+                'rating_distribution': {1: 0, 2: 0, 3: 0, 4: 0, 5: 0},
+                'platform_distribution': {},
+                'period_start': start_date.isoformat() if start_date else '',
+                'period_end': datetime.now().isoformat()
             }
     
     async def get_user_stores(self, user_code: str) -> List[Dict[str, Any]]:
@@ -252,7 +348,10 @@ class SupabaseService:
         status: str,
         reply_content: str = None,
         reply_type: str = None,
-        reply_by: str = None
+        reply_by: str = None,
+        boss_review_needed: bool = None,
+        review_reason: str = None,
+        urgency_score: float = None
     ) -> bool:
         """리뷰 상태 업데이트"""
         try:
@@ -261,15 +360,36 @@ class SupabaseService:
                 'updated_at': datetime.now().isoformat()
             }
             
-            if reply_content:
+            if reply_content is not None:
+                update_data['ai_response'] = reply_content
                 update_data['final_response'] = reply_content
-                update_data['response_at'] = datetime.now().isoformat()
             
-            if reply_type:
+            if reply_type is not None:
                 update_data['response_method'] = reply_type
             
-            if reply_by:
+            if reply_by is not None:
                 update_data['response_by'] = reply_by
+            
+            if boss_review_needed is not None:
+                update_data['boss_reply_needed'] = boss_review_needed
+                
+            if review_reason is not None:
+                update_data['review_reason'] = review_reason
+            
+            # urgency_score를 urgency_level로 변환
+            if urgency_score is not None:
+                if urgency_score >= 0.8:
+                    urgency_level = 'critical'
+                elif urgency_score >= 0.6:
+                    urgency_level = 'high'
+                elif urgency_score >= 0.4:
+                    urgency_level = 'medium'
+                else:
+                    urgency_level = 'low'
+                update_data['urgency_level'] = urgency_level
+            
+            if status == 'posted':
+                update_data['response_at'] = datetime.now().isoformat()
             
             response = await self._execute_query(
                 self.client.table('reviews')
@@ -278,7 +398,6 @@ class SupabaseService:
             )
             
             return bool(response.data)
-            
         except Exception as e:
             logger.error(f"리뷰 상태 업데이트 오류: {e}")
             return False
@@ -496,3 +615,12 @@ class SupabaseService:
         except Exception as e:
             logger.error(f"리뷰 답글 업데이트 오류: {e}")
             return False
+        
+        # 파일 끝에 추가
+def get_supabase_client() -> Client:
+    """
+    Supabase 클라이언트 반환 (config에서 import)
+    subprocess에서 사용하기 위한 wrapper 함수
+    """
+    from config.supabase_client import get_supabase_client as get_client
+    return get_client()

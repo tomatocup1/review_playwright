@@ -62,7 +62,7 @@ class SubprocessCrawlerWrapper:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=60  # 60초 타임아웃
+                timeout=120  # 60초 타임아웃
             )
             
             if result.stderr:

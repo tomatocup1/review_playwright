@@ -37,6 +37,109 @@ class BaeminSyncReviewCrawler(BaeminSyncCrawler):
         self.review_screenshot_dir = Path("C:/Review_playwright/logs/screenshots/baemin_reviews")
         self.review_screenshot_dir.mkdir(parents=True, exist_ok=True)
     
+    def close_popup(self):
+        """팝업 닫기 - 다양한 기간의 '보지 않기' 옵션 처리"""
+        try:
+            # 팝업이 나타날 때까지 잠시 대기
+            self.page.wait_for_timeout(2000)
+            
+            # 우선순위: 더 긴 기간의 "보지 않기" 버튼을 먼저 찾아서 클릭
+            priority_selectors = [
+                # 긴 기간부터 우선적으로 처리
+                ('button:has-text("30일간 보지 않기")', '30일간'),
+                ('span:has-text("30일간 보지 않기")', '30일간'),
+                ('button:has-text("7일간 보지 않기")', '7일간'),
+                ('span:has-text("7일간 보지 않기")', '7일간'),
+                ('button:has-text("3일 동안 보지 않기")', '3일 동안'),
+                ('span:has-text("3일 동안 보지 않기")', '3일 동안'),
+                ('button:has-text("1일간 보지 않기")', '1일간'),
+                ('span:has-text("1일간 보지 않기")', '1일간'),
+                ('button:has-text("오늘 하루 보지 않기")', '오늘 하루'),
+                ('span:has-text("오늘 하루 보지 않기")', '오늘 하루')
+            ]
+            
+            # 먼저 우선순위 선택자로 시도
+            for selector, period in priority_selectors:
+                try:
+                    if self.page.is_visible(selector):
+                        self.page.click(selector)
+                        logger.info(f"팝업을 닫았습니다: {period} 보지 않기")
+                        self.page.wait_for_timeout(1000)
+                        return True
+                except:
+                    continue
+            
+            # "보지 않기"가 포함된 모든 요소를 찾아서 처리
+            try:
+                elements_with_text = self.page.get_by_text("보지 않기")
+                count = elements_with_text.count()
+                
+                if count > 0:
+                    logger.info(f"'보지 않기' 텍스트가 포함된 {count}개의 요소 발견")
+                    
+                    for i in range(count):
+                        try:
+                            element = elements_with_text.nth(i)
+                            if element.is_visible():
+                                text_content = element.text_content()
+                                element.click()
+                                logger.info(f"팝업을 닫았습니다: {text_content}")
+                                self.page.wait_for_timeout(1000)
+                                return True
+                        except:
+                            continue
+            except:
+                pass
+                
+            logger.debug("닫을 팝업이 없거나 이미 닫혀있습니다")
+            return False
+            
+        except Exception as e:
+            logger.debug(f"팝업 처리 중 예외 발생: {str(e)}")
+            return False
+
+    def handle_popups(self):
+        """모든 종류의 팝업 처리"""
+        try:
+            # 먼저 "보지 않기" 타입 팝업 처리 시도
+            self.close_popup()
+            
+            # 추가적인 팝업 처리 (닫기, 확인 등)
+            self.page.wait_for_timeout(1000)
+            
+            # 다양한 팝업 닫기 버튼 선택자
+            popup_close_selectors = [
+                'button:has-text("닫기")',
+                'button:has-text("확인")',
+                '[aria-label="Close"]',
+                '[aria-label="닫기"]',
+                '.close-button',
+                '.popup-close',
+                'button.close',
+                'button[aria-label="close"]',
+                'button[aria-label="닫기"]',
+                '[role="button"][aria-label="close"]'
+            ]
+            
+            closed_count = 0
+            for selector in popup_close_selectors:
+                try:
+                    elements = self.page.query_selector_all(selector)
+                    for element in elements:
+                        if element.is_visible():
+                            element.click()
+                            closed_count += 1
+                            logger.info(f"추가 팝업 닫기: {selector}")
+                            self.page.wait_for_timeout(500)
+                except:
+                    continue
+            
+            if closed_count > 0:
+                logger.info(f"추가로 {closed_count}개의 팝업을 닫았습니다")
+                
+        except Exception as e:
+            logger.debug(f"팝업 처리 중 예외 발생: {str(e)}")
+
     def navigate_to_reviews(self, platform_code: str) -> bool:
         """리뷰 페이지로 이동"""
         try:
@@ -58,6 +161,11 @@ class BaeminSyncReviewCrawler(BaeminSyncCrawler):
             logger.info("3초 추가 대기...")
             self.page.wait_for_timeout(3000)
             
+            # 팝업 처리 추가
+            logger.info("========== 팝업 처리 시작 ==========")
+            self.handle_popups()
+            logger.info("========== 팝업 처리 완료 ==========")
+
             # 새 탭이 열렸는지 확인하고 닫기
             current_pages = self.context.pages
             if len(current_pages) > initial_pages:
@@ -126,10 +234,6 @@ class BaeminSyncReviewCrawler(BaeminSyncCrawler):
                             
             except Exception as e:
                 logger.error(f"미답변 탭 클릭 중 예외: {e}")
-            
-            # 스크린샷 저장
-            self.save_review_screenshot("after_navigation")
-            logger.info("스크린샷 저장 완료")
             
             logger.info("========== 리뷰 페이지 이동 완료 ==========\n")
             return True
@@ -439,9 +543,6 @@ class BaeminSyncReviewCrawler(BaeminSyncCrawler):
             
             # 등록 완료 대기
             self.page.wait_for_timeout(3000)
-            
-            # 스크린샷 저장
-            self.save_review_screenshot(f"reply_posted_{review_data['review_id'][:8]}")
             
             return True
             

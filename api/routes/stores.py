@@ -215,7 +215,7 @@ async def crawl_platform_stores(
                     store = PlatformStore(
                         platform=request.platform,
                         platform_code=store_data.get('platform_code', ''),
-                        store_name=store_data.get('store_name', ''),
+                        store_name=store_data.get('store_name') or store_data.get('name', ''),  # name 필드도 체크
                         store_type=store_data.get('store_type'),
                         category=store_data.get('category'),
                         brand_name=store_data.get('brand_name'),

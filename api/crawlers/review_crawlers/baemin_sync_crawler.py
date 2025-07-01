@@ -137,8 +137,6 @@ class BaeminSyncCrawler:
             self.page.goto(self.login_url)
             self.page.wait_for_load_state('networkidle')
             
-            self.save_screenshot("login_page")
-            
             # 아이디 입력
             self.page.fill('input[type="text"]', username)
             logger.info("아이디 입력 완료")
@@ -159,9 +157,6 @@ class BaeminSyncCrawler:
             current_url = self.page.url
             logger.info(f"로그인 후 URL: {current_url}")
             
-            # 스크린샷 저장
-            self.save_screenshot("after_login")
-            
             # 단순히 로그인 페이지를 벗어났는지 확인
             if 'login' not in current_url.lower():
                 logger.info("로그인 페이지를 벗어남 - 로그인 성공")
@@ -177,51 +172,131 @@ class BaeminSyncCrawler:
             return False
             
     def close_popup(self):
-        """팝업 닫기"""
+        """팝업 닫기 - 다양한 기간의 '보지 않기' 옵션 처리"""
         try:
             # 팝업이 나타날 때까지 잠시 대기
             self.page.wait_for_timeout(2000)
             
-            # "오늘 하루 보지 않기" 버튼 찾아서 클릭
+            # 다양한 기간의 "보지 않기" 버튼 선택자
             popup_close_selectors = [
+                # 정규표현식을 사용한 패턴 매칭
+                'button:has-text("보지 않기")',  # 모든 "보지 않기" 텍스트 포함
+                'span:has-text("보지 않기")',
+                'div:has-text("보지 않기")',
+                # 구체적인 기간별 선택자
                 'button:has-text("오늘 하루 보지 않기")',
+                'button:has-text("1일간 보지 않기")',
+                'button:has-text("3일 동안 보지 않기")',
+                'button:has-text("7일간 보지 않기")',
+                'button:has-text("30일간 보지 않기")',
+                # span 태그 버전
                 'span:has-text("오늘 하루 보지 않기")',
+                'span:has-text("1일간 보지 않기")',
+                'span:has-text("3일 동안 보지 않기")',
+                'span:has-text("7일간 보지 않기")',
+                'span:has-text("30일간 보지 않기")',
+                # 텍스트 직접 매칭
                 'text="오늘 하루 보지 않기"',
-                '.TextButton_b_b8ew_1j0jumh3'  # 클래스명으로도 시도
+                'text="1일간 보지 않기"',
+                'text="3일 동안 보지 않기"',
+                'text="7일간 보지 않기"',
+                'text="30일간 보지 않기"',
+                # 클래스명으로도 시도
+                '.TextButton_b_b8ew_1j0jumh3'
             ]
             
-            for selector in popup_close_selectors:
+            # 우선순위: 더 긴 기간의 "보지 않기" 버튼을 먼저 찾아서 클릭
+            priority_selectors = [
+                # 긴 기간부터 우선적으로 처리
+                ('button:has-text("30일간 보지 않기")', '30일간'),
+                ('span:has-text("30일간 보지 않기")', '30일간'),
+                ('button:has-text("7일간 보지 않기")', '7일간'),
+                ('span:has-text("7일간 보지 않기")', '7일간'),
+                ('button:has-text("3일 동안 보지 않기")', '3일 동안'),
+                ('span:has-text("3일 동안 보지 않기")', '3일 동안'),
+                ('button:has-text("1일간 보지 않기")', '1일간'),
+                ('span:has-text("1일간 보지 않기")', '1일간'),
+                ('button:has-text("오늘 하루 보지 않기")', '오늘 하루'),
+                ('span:has-text("오늘 하루 보지 않기")', '오늘 하루')
+            ]
+            
+            # 먼저 우선순위 선택자로 시도
+            for selector, period in priority_selectors:
                 try:
                     if self.page.is_visible(selector):
                         self.page.click(selector)
-                        logger.info(f"팝업을 닫았습니다: {selector}")
+                        logger.info(f"팝업을 닫았습니다: {period} 보지 않기")
                         self.page.wait_for_timeout(1000)
                         return
                 except:
                     continue
+            
+            # 우선순위 선택자로 못 찾은 경우, 일반 선택자로 시도
+            for selector in popup_close_selectors:
+                try:
+                    if self.page.is_visible(selector):
+                        # 버튼 텍스트 가져오기
+                        element = self.page.query_selector(selector)
+                        if element:
+                            text_content = element.text_content()
+                            self.page.click(selector)
+                            logger.info(f"팝업을 닫았습니다: {text_content}")
+                            self.page.wait_for_timeout(1000)
+                            return
+                except:
+                    continue
+            
+            # "보지 않기"가 포함된 모든 요소를 찾아서 처리
+            try:
+                # Playwright의 필터 기능을 사용하여 "보지 않기" 텍스트가 있는 요소 찾기
+                elements_with_text = self.page.get_by_text("보지 않기")
+                count = elements_with_text.count()
+                
+                if count > 0:
+                    logger.info(f"'보지 않기' 텍스트가 포함된 {count}개의 요소 발견")
                     
+                    # 첫 번째 보이는 요소 클릭
+                    for i in range(count):
+                        try:
+                            element = elements_with_text.nth(i)
+                            if element.is_visible():
+                                text_content = element.text_content()
+                                element.click()
+                                logger.info(f"팝업을 닫았습니다: {text_content}")
+                                self.page.wait_for_timeout(1000)
+                                return
+                        except:
+                            continue
+            except:
+                pass
+                        
             logger.info("닫을 팝업이 없거나 이미 닫혀있습니다")
-                    
+                        
         except Exception as e:
             logger.debug(f"팝업 처리 중 예외 발생: {str(e)}")
 
     def handle_popups(self):
-        """모든 종류의 팝업 처리"""
+        """모든 종류의 팝업 처리 - close_popup을 먼저 시도"""
         try:
-            # 팝업이 나타날 때까지 잠시 대기
-            self.page.wait_for_timeout(2000)
+            # 먼저 "보지 않기" 타입 팝업 처리 시도
+            self.close_popup()
+            
+            # 추가적인 팝업 처리 (닫기, 확인 등)
+            self.page.wait_for_timeout(1000)
             
             # 다양한 팝업 닫기 버튼 선택자
             popup_close_selectors = [
-                'button:has-text("오늘 하루 보지 않기")',
-                'span:has-text("오늘 하루 보지 않기")',
                 'button:has-text("닫기")',
                 'button:has-text("확인")',
                 '[aria-label="Close"]',
                 '[aria-label="닫기"]',
                 '.close-button',
                 '.popup-close',
-                'button.close'
+                'button.close',
+                # X 버튼
+                'button[aria-label="close"]',
+                'button[aria-label="닫기"]',
+                '[role="button"][aria-label="close"]'
             ]
             
             closed_count = 0
@@ -232,16 +307,14 @@ class BaeminSyncCrawler:
                         if element.is_visible():
                             element.click()
                             closed_count += 1
-                            logger.info(f"팝업 닫기: {selector}")
+                            logger.info(f"추가 팝업 닫기: {selector}")
                             self.page.wait_for_timeout(500)
                 except:
                     continue
             
             if closed_count > 0:
-                logger.info(f"총 {closed_count}개의 팝업을 닫았습니다")
-            else:
-                logger.info("닫을 팝업이 없거나 이미 닫혀있습니다")
-                
+                logger.info(f"추가로 {closed_count}개의 팝업을 닫았습니다")
+                    
         except Exception as e:
             logger.debug(f"팝업 처리 중 예외 발생: {str(e)}")
 
@@ -264,9 +337,7 @@ class BaeminSyncCrawler:
             
             # 팝업 닫기
             self.close_popup()
-            
-            self.save_screenshot("self_service_page")
-            
+
             stores = []
             
             # select 요소 찾기

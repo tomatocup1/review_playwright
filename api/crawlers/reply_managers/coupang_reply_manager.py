@@ -29,11 +29,7 @@ class CoupangReplyManager:
             # 로그인 페이지로 이동
             await page.goto("https://store.coupangeats.com/merchant/login", wait_until="networkidle")
             await page.wait_for_timeout(2000)
-            
-            # 스크린샷 저장
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            await page.screenshot(path=f"{self.screenshots_dir}/login_page_{timestamp}.png")
-            
+
             # 아이디 입력
             await page.wait_for_selector('#loginId', state='visible', timeout=10000)
             await page.fill('#loginId', self.platform_id)
@@ -53,7 +49,6 @@ class CoupangReplyManager:
             current_url = page.url
             if "login" not in current_url:
                 logger.info("쿠팡이츠 로그인 성공")
-                await page.screenshot(path=f"{self.screenshots_dir}/login_success_{timestamp}.png")
                 return True
             else:
                 logger.error("쿠팡이츠 로그인 실패")
@@ -182,10 +177,6 @@ class CoupangReplyManager:
             # 미답변 탭 클릭
             await page.click('div:has-text("미답변").css-jzkpn6.e1kgpv5e2')
             await page.wait_for_timeout(3000)
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            await page.screenshot(path=f"{self.screenshots_dir}/reviews_page_{timestamp}.png")
-            
             return True
             
         except Exception as e:
@@ -285,14 +276,11 @@ class CoupangReplyManager:
                                 submit_button = await page.query_selector('button.button--primaryContained:has-text("등록")')
                             
                             if submit_button:
-                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                await page.screenshot(path=f"{self.screenshots_dir}/before_submit_{timestamp}.png")
                                 
                                 await submit_button.click()
                                 await page.wait_for_timeout(3000)
                                 
                                 logger.info("답글 등록 완료")
-                                await page.screenshot(path=f"{self.screenshots_dir}/after_submit_{timestamp}.png")
                                 return True
                             else:
                                 logger.error("등록 버튼을 찾을 수 없음")

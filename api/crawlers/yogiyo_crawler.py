@@ -76,8 +76,42 @@ class YogiyoCrawler(WindowsAsyncBaseCrawler):
             await self.page.click('button[type="submit"]')
             logger.info("로그인 버튼 클릭")
             
+            # 인증 메일 팝업 처리 추가
+            await asyncio.sleep(3)  # 팝업이 나타날 시간 대기
+            
+            try:
+                # 인증 메일 확인 팝업 체크
+                auth_popup = await self.page.query_selector('div.Alert__Message-sc-a98nwm-3.ewbPZf')
+                if auth_popup:
+                    popup_text = await auth_popup.text_content()
+                    if '인증 메일 확인이 완료되지 않았습니다' in popup_text:
+                        logger.info("인증 메일 팝업 감지됨")
+                        
+                        # 첫 번째 확인 버튼 클릭
+                        confirm_button = await self.page.query_selector('button.sc-bczRLJ.claiZC.sc-eCYdqJ.hsiXYt')
+                        if confirm_button:
+                            await confirm_button.click()
+                            logger.info("인증 메일 재발송 확인 버튼 클릭")
+                            await asyncio.sleep(2)
+                            
+                            # 두 번째 팝업의 확인 버튼 클릭
+                            second_popup = await self.page.query_selector('div.Alert__Message-sc-a98nwm-3.ewbPZf')
+                            if second_popup:
+                                second_popup_text = await second_popup.text_content()
+                                if '인증 메일을 발송했습니다' in second_popup_text:
+                                    logger.info("인증 메일 발송 팝업 감지됨")
+                                    
+                                    # 두 번째 확인 버튼 클릭
+                                    second_confirm_button = await self.page.query_selector('button.sc-bczRLJ.claiZC.sc-eCYdqJ.hsiXYt')
+                                    if second_confirm_button:
+                                        await second_confirm_button.click()
+                                        logger.info("인증 메일 발송 확인 버튼 클릭")
+                                        await asyncio.sleep(2)
+            except Exception as e:
+                logger.info(f"인증 메일 팝업 처리 중 예외 발생 (정상적인 경우일 수 있음): {str(e)}")
+            
             # 로그인 성공 확인 - 더 긴 대기 시간
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
             
             current_url = self.page.url
             logger.info(f"로그인 후 URL: {current_url}")
@@ -85,7 +119,6 @@ class YogiyoCrawler(WindowsAsyncBaseCrawler):
             if 'ceo.yogiyo.co.kr' in current_url and 'login' not in current_url:
                 self.logged_in = True
                 logger.info("요기요 로그인 성공")
-                await self.save_screenshot("login_success")
                 return True
             else:
                 logger.error("요기요 로그인 실패")

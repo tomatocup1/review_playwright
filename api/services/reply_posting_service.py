@@ -13,7 +13,7 @@ import sys
 import os
 import subprocess
 import re
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from pathlib import Path
 
@@ -48,7 +48,7 @@ class ReplyPostingService:
         self.BROWSER_TIMEOUT = 60  # 브라우저 작업 타임아웃 증가
         
         # 지원하는 플랫폼 목록
-        self.SUPPORTED_PLATFORMS = ['baemin', 'yogiyo', 'coupang']
+        self.SUPPORTED_PLATFORMS = ['baemin', 'yogiyo', 'coupang', 'naver']
         
         # 로그 디렉토리 생성
         self.log_dir = Path("C:/Review_playwright/logs")
@@ -459,19 +459,12 @@ class ReplyPostingService:
             if platform == 'baemin':
                 return await self._post_baemin_reply(review_data, store_config, reply_content)
             elif platform == 'yogiyo':
-                return {
-                    'success': False,
-                    'error': '요기요 답글 등록은 아직 구현되지 않았습니다',
-                    'review_id': review_data.get('review_id'),
-                    'platform': platform
-                }
+                return await self._post_yogiyo_reply(review_data, store_config, reply_content)
             elif platform == 'coupang':
-                return {
-                    'success': False,
-                    'error': '쿠팡이츠 답글 등록은 아직 구현되지 않았습니다',
-                    'review_id': review_data.get('review_id'),
-                    'platform': platform
-                }
+                # 쿠팡이츠 답글 등록 구현 호출로 변경
+                return await self._post_coupang_reply(review_data, store_config, reply_content)
+            elif platform == 'naver':  # 네이버 추가
+                return await self._post_naver_reply(review_data, store_config, reply_content)
             else:
                 return {
                     'success': False,
@@ -700,6 +693,551 @@ class ReplyPostingService:
             self.logger.info(f"=== 서브프로세스 종료: {review_id} ===")
             self.logger.info(f"{'='*50}")
 
+    async def _run_coupang_subprocess_manager(self, review_id: str, store_config: dict) -> dict:
+        """쿠팡이츠 답글 등록을 위한 subprocess 실행"""
+        try:
+            self.logger.info(f"{'='*50}")
+            self.logger.info(f"=== 쿠팡 서브프로세스 시작: {review_id} ===")
+            self.logger.info(f"=== 시작 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
+            self.logger.info(f"{'='*50}")
+            
+            # 실행할 Python 스크립트 경로
+            script_path = Path(__file__).parent / "platforms" / "coupang_subprocess.py"
+            
+            # 스크립트 파일 존재 확인
+            if not script_path.exists():
+                error_msg = f"쿠팡 subprocess 스크립트를 찾을 수 없습니다: {script_path}"
+                self.logger.error(error_msg)
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'final_status': 'failed'
+                }
+            
+            # 리뷰 정보 조회
+            review = await self._get_review_data(review_id)
+            if not review:
+                return {
+                    'success': False,
+                    'error': f'리뷰를 찾을 수 없습니다: {review_id}',
+                    'final_status': 'failed'
+                }
+            
+            # subprocess에 전달할 데이터
+            subprocess_data = {
+                'store_info': {
+                    'platform_id': store_config['platform_id'],
+                    'platform_pw': store_config['platform_pw'],
+                    'store_code': store_config['store_code'],
+                    'platform_code': store_config['platform_code']  # 쿠팡 매장 ID
+                },
+                'review_data': {
+                    'review_id': review_id,
+                    'review_content': review.get('review_content', ''),
+                    'ordered_menu': review.get('ordered_menu', ''),
+                    'reply_content': store_config.get('final_response', '') or store_config.get('reply_content', '')
+                }
+            }
+            
+            # 답글 내용 확인
+            if not subprocess_data['review_data']['reply_content']:
+                error_msg = "답글 내용이 없습니다"
+                self.logger.error(error_msg)
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'final_status': 'failed'
+                }
+            
+            # subprocess 실행 (동기식으로 변경)
+            cmd = [
+                sys.executable,
+                str(script_path),
+                json.dumps(subprocess_data, ensure_ascii=False)
+            ]
+            
+            # Windows 환경 변수 설정 추가
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            
+            self.logger.info(f"쿠팡 서브프로세스 실행 정보:")
+            self.logger.info(f"  - Review ID: {review_id}")
+            self.logger.info(f"  - Platform Code: {store_config['platform_code']}")
+            self.logger.info(f"  - Platform ID: {store_config['platform_id'][:4]}***")
+            self.logger.info(f"  - Script Path: {script_path}")
+            self.logger.info(f"  - Reply Content Length: {len(subprocess_data['review_data']['reply_content'])} chars")
+            
+            # Windows에서 subprocess 실행
+            start_time = time.time()
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',  # UTF-8 인코딩 명시
+                timeout=180,
+                creationflags=0 if sys.platform != 'win32' else subprocess.CREATE_NO_WINDOW,
+                env=env  # 환경 변수 전달 추가
+            )
+            
+            execution_time = time.time() - start_time
+            self.logger.info(f"subprocess 실행 완료 - 실행 시간: {execution_time:.2f}초")
+            self.logger.info(f"subprocess 종료 코드: {result.returncode}")
+            
+            # stdout/stderr 로그
+            if result.stdout:
+                self.logger.info(f"subprocess stdout: {result.stdout}")
+            if result.stderr:
+                self.logger.error(f"subprocess stderr: {result.stderr}")
+            
+            # 결과 파싱
+            if result.returncode == 0:
+                try:
+                    response = json.loads(result.stdout)
+                    self.logger.info(f"쿠팡 서브프로세스 응답: {response}")
+                    
+                    if response.get('success'):
+                        return {
+                            'success': True,
+                            'message': response.get('message', '답글이 성공적으로 등록되었습니다'),
+                            'final_status': 'posted'
+                        }
+                    else:
+                        return {
+                            'success': False,
+                            'error': response.get('error', response.get('message', '알 수 없는 오류')),
+                            'final_status': 'failed'
+                        }
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"JSON 파싱 오류: {result.stdout}")
+                    return {
+                        'success': False,
+                        'error': f'subprocess 결과 파싱 오류: {str(e)}',
+                        'final_status': 'failed'
+                    }
+            else:
+                error_msg = result.stderr or result.stdout or '알 수 없는 오류'
+                self.logger.error(f"쿠팡 서브프로세스 실패: {error_msg}")
+                return {
+                    'success': False,
+                    'error': f'subprocess 실행 실패: {error_msg}',
+                    'final_status': 'failed'
+                }
+                
+        except subprocess.TimeoutExpired:
+            self.logger.error("쿠팡 subprocess 타임아웃 (180초 초과)")
+            return {
+                'success': False,
+                'error': '처리 시간이 초과되었습니다',
+                'final_status': 'timeout'
+            }
+        except Exception as e:
+            error_msg = f"쿠팡 subprocess 실행 중 오류: {str(e)}"
+            self.logger.error(f"{error_msg}\n{traceback.format_exc()}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'final_status': 'failed'
+            }
+        finally:
+            self.logger.info(f"{'='*50}")
+            self.logger.info(f"=== 쿠팡 서브프로세스 종료: {review_id} ===")
+            self.logger.info(f"{'='*50}")
+    
+    async def _run_yogiyo_subprocess_manager(self, review_id: str, store_config: dict) -> dict:
+        """요기요 답글 등록을 위한 subprocess 실행"""
+        try:
+            self.logger.info(f"{'='*50}")
+            self.logger.info(f"=== 요기요 서브프로세스 시작: {review_id} ===")
+            self.logger.info(f"=== 시작 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
+            self.logger.info(f"{'='*50}")
+            
+            script_path = Path(__file__).parent / "platforms" / "yogiyo_subprocess.py"
+            
+            # 스크립트 파일 존재 확인
+            if not script_path.exists():
+                error_msg = f"요기요 subprocess 스크립트를 찾을 수 없습니다: {script_path}"
+                self.logger.error(error_msg)
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'final_status': 'failed'
+                }
+            
+            # store_config에서 필요한 정보 추출
+            platform_id = store_config.get('platform_id', '')
+            platform_pw = store_config.get('platform_pw', '')  
+            platform_code = store_config.get('platform_code', '')
+            
+            # AI 응답 텍스트 가져오기
+            response_text = (
+                store_config.get('final_response') or 
+                store_config.get('ai_response') or 
+                store_config.get('response_text') or 
+                store_config.get('reply_content') or
+                ''
+            )
+            
+            # 리뷰 정보 조회
+            review_info = {}
+            try:
+                review_data = await self._get_review_data(review_id)
+                if review_data:
+                    review_info = {
+                        'review_id': review_id,
+                        'review_name': review_data.get('review_name', ''),
+                        'rating': review_data.get('rating', 0),
+                        'review_content': review_data.get('review_content', ''),
+                        'review_date': review_data.get('review_date', ''),
+                        'ordered_menu': review_data.get('ordered_menu', '')
+                    }
+                    self.logger.info(f"리뷰 정보 조회 성공: {review_info}")
+            except Exception as e:
+                self.logger.error(f"리뷰 정보 조회 실패: {e}")
+            
+            # 답글 내용이 없는 경우 경고
+            if not response_text:
+                self.logger.warning(f"AI 응답을 찾을 수 없음. store_config keys: {list(store_config.keys())}")
+                response_text = "소중한 리뷰 감사합니다! 더 나은 서비스로 보답하겠습니다."
+            
+            # 인자 검증
+            if not all([platform_id, platform_pw, platform_code]):
+                missing = []
+                if not platform_id: missing.append('platform_id')
+                if not platform_pw: missing.append('platform_pw')
+                if not platform_code: missing.append('platform_code')
+                raise ValueError(f"필수 정보 누락: {', '.join(missing)}")
+            
+            # subprocess 실행 인자
+            import json
+            review_info_json = json.dumps(review_info, ensure_ascii=False)
+            
+            cmd = [
+                sys.executable,
+                str(script_path),
+                review_id,
+                platform_id,
+                platform_pw,
+                platform_code,
+                response_text or "소중한 리뷰 감사합니다! 더 나은 서비스로 보답하겠습니다.",
+                review_info_json
+            ]
+            
+            self.logger.info(f"요기요 서브프로세스 실행 정보:")
+            self.logger.info(f"  - Review ID: {review_id}")
+            self.logger.info(f"  - Platform Code: {platform_code}")
+            self.logger.info(f"  - Platform ID: {platform_id[:4]}***")
+            self.logger.info(f"  - Reply Length: {len(response_text)}자")
+            self.logger.info(f"  - Review Info: {review_info}")
+            self.logger.info(f"  - Script Path: {script_path}")
+            
+            # Windows에서 subprocess 실행 옵션
+            creation_flags = 0
+            
+            # subprocess 실행
+            self.logger.info("subprocess.run() 호출 시작...")
+            start_time = time.time()
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                creationflags=creation_flags
+            )
+            
+            execution_time = time.time() - start_time
+            self.logger.info(f"subprocess.run() 완료 - 실행 시간: {execution_time:.2f}초")
+            self.logger.info(f"subprocess 종료 코드: {result.returncode}")
+            
+            # 로그 파일 확인
+            log_file = self.log_dir / f"yogiyo_subprocess_{review_id}.log"
+            subprocess_logs = ""
+            if log_file.exists():
+                try:
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        subprocess_logs = f.read()
+                        self.logger.info(f"서브프로세스 로그 파일 크기: {len(subprocess_logs)}바이트")
+                except Exception as e:
+                    self.logger.error(f"로그 파일 읽기 실패: {e}")
+            
+            # stdout/stderr 로그
+            if result.stdout:
+                self.logger.info(f"subprocess stdout:\n{result.stdout}")
+            if result.stderr:
+                self.logger.error(f"subprocess stderr:\n{result.stderr}")
+            
+            # 결과 처리
+            if result.returncode == 0:
+                if "SUCCESS" in result.stdout:
+                    self.logger.info("✅ 요기요 서브프로세스 성공")
+                    return {
+                        'success': True,
+                        'message': '답글이 성공적으로 등록되었습니다.',
+                        'execution_time': execution_time,
+                        'final_status': 'posted'
+                    }
+                elif "ERROR:" in result.stdout:
+                    error_msg = result.stdout.split("ERROR:", 1)[1].strip()
+                    
+                    # "리뷰를 찾을 수 없거나" 에러 처리
+                    if "리뷰를 찾을 수 없거나" in error_msg:
+                        try:
+                            current_review = await self._get_review_data(review_id)
+                            if current_review and current_review.get('response_status') == 'posted':
+                                self.logger.info(f"이미 답글이 등록된 리뷰입니다: {review_id}")
+                                return {
+                                    'success': True,
+                                    'message': '이미 답글이 등록되었습니다.',
+                                    'execution_time': execution_time,
+                                    'final_status': 'posted'
+                                }
+                        except Exception as e:
+                            self.logger.error(f"리뷰 상태 확인 실패: {e}")
+                    
+                    self.logger.error(f"❌ 요기요 서브프로세스 에러: {error_msg}")
+                    return {
+                        'success': False,
+                        'error': error_msg,
+                        'logs': subprocess_logs,
+                        'execution_time': execution_time,
+                        'final_status': 'failed'
+                    }
+                else:
+                    try:
+                        response = json.loads(result.stdout)
+                        self.logger.info(f"JSON 응답 파싱 성공: {response}")
+                        if 'final_status' not in response:
+                            response['final_status'] = 'posted' if response.get('success') else 'failed'
+                        return response
+                    except:
+                        self.logger.warning("JSON 파싱 실패, 기본 성공 응답 반환")
+                        return {
+                            'success': True,
+                            'message': '답글이 등록되었습니다.',
+                            'execution_time': execution_time,
+                            'final_status': 'posted'
+                        }
+            else:
+                error_msg = result.stderr or result.stdout or "알 수 없는 오류"
+                self.logger.error(f"❌ 요기요 서브프로세스 에러 (exit code: {result.returncode}): {error_msg}")
+                
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'logs': subprocess_logs,
+                    'execution_time': execution_time,
+                    'final_status': 'failed'
+                }
+                
+        except subprocess.TimeoutExpired:
+            self.logger.error("⏱️ 요기요 서브프로세스 타임아웃 (180초 초과)")
+            return {
+                'success': False,
+                'error': '처리 시간이 초과되었습니다. 다시 시도해주세요.',
+                'final_status': 'failed'
+            }
+        except Exception as e:
+            self.logger.error(f"💥 요기요 서브프로세스 실행 오류: {str(e)}")
+            self.logger.error(f"상세 에러:\n{traceback.format_exc()}")
+            return {
+                'success': False,
+                'error': str(e),
+                'final_status': 'failed'
+            }
+        finally:
+            self.logger.info(f"{'='*50}")
+            self.logger.info(f"=== 요기요 서브프로세스 종료: {review_id} ===")
+            self.logger.info(f"{'='*50}")
+
+    async def _run_naver_subprocess_manager(self, review_id: str, store_config: dict) -> dict:
+        """네이버 플레이스 답글 등록을 위한 subprocess 실행"""
+        try:
+            self.logger.info(f"{'='*50}")
+            self.logger.info(f"=== 네이버 서브프로세스 시작: {review_id} ===")
+            self.logger.info(f"=== 시작 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
+            self.logger.info(f"{'='*50}")
+            
+            script_path = Path(__file__).parent / "platforms" / "naver_subprocess.py"
+            
+            # 스크립트 파일 존재 확인
+            if not script_path.exists():
+                error_msg = f"네이버 subprocess 스크립트를 찾을 수 없습니다: {script_path}"
+                self.logger.error(error_msg)
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'final_status': 'failed'
+                }
+            
+            # store_config에서 필요한 정보 추출
+            platform_id = store_config.get('platform_id', '')
+            platform_pw = store_config.get('platform_pw', '')  
+            platform_code = store_config.get('platform_code', '')
+            
+            # AI 응답 텍스트 가져오기
+            response_text = (
+                store_config.get('final_response') or 
+                store_config.get('ai_response') or 
+                store_config.get('response_text') or 
+                store_config.get('reply_content') or
+                ''
+            )
+            
+            # 리뷰 정보 조회
+            review_info = {}
+            try:
+                review_data = await self._get_review_data(review_id)
+                if review_data:
+                    review_info = {
+                        'review_id': review_id,
+                        'review_name': review_data.get('review_name', ''),
+                        'rating': review_data.get('rating', 0),
+                        'review_content': review_data.get('review_content', ''),
+                        'review_date': review_data.get('review_date', ''),
+                        'ordered_menu': review_data.get('ordered_menu', '')
+                    }
+                    self.logger.info(f"리뷰 정보 조회 성공: {review_info}")
+            except Exception as e:
+                self.logger.error(f"리뷰 정보 조회 실패: {e}")
+            
+            # 답글 내용이 없는 경우 경고
+            if not response_text:
+                self.logger.warning(f"AI 응답을 찾을 수 없음. store_config keys: {list(store_config.keys())}")
+                response_text = "소중한 리뷰 감사합니다! 더 나은 서비스로 보답하겠습니다."
+            
+            # 인자 검증
+            if not all([platform_id, platform_pw, platform_code]):
+                missing = []
+                if not platform_id: missing.append('platform_id')
+                if not platform_pw: missing.append('platform_pw')
+                if not platform_code: missing.append('platform_code')
+                raise ValueError(f"필수 정보 누락: {', '.join(missing)}")
+            
+            # subprocess에 전달할 데이터 (쿠팡 방식과 동일하게)
+            import json
+            subprocess_data = {
+                'store_info': {
+                    'platform_id': platform_id,
+                    'platform_pw': platform_pw,
+                    'platform_code': platform_code,
+                    'store_code': store_config.get('store_code', '')
+                },
+                'review_ids': [review_id],  # 리스트 형태로 전달
+                'reply_contents': {review_id: response_text}  # 답글 내용 추가
+            }
+
+            cmd = [
+                sys.executable,
+                str(script_path),
+                json.dumps(subprocess_data['review_ids'], ensure_ascii=False),      # 첫 번째 인자: review_ids
+                json.dumps(subprocess_data['store_info'], ensure_ascii=False),      # 두 번째 인자: store_info
+                json.dumps(subprocess_data['reply_contents'], ensure_ascii=False)   # 세 번째 인자: reply_contents
+            ]
+            
+            self.logger.info(f"네이버 서브프로세스 실행 정보:")
+            self.logger.info(f"  - Review ID: {review_id}")
+            self.logger.info(f"  - Platform Code: {platform_code}")
+            self.logger.info(f"  - Platform ID: {platform_id[:4]}***")
+            self.logger.info(f"  - Reply Length: {len(response_text)}자")
+            self.logger.info(f"  - Review Info: {review_info}")
+            self.logger.info(f"  - Script Path: {script_path}")
+            
+            # Windows에서 subprocess 실행 옵션
+            creation_flags = 0
+            
+            # subprocess 실행
+            self.logger.info("subprocess.run() 호출 시작...")
+            start_time = time.time()
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                creationflags=creation_flags
+            )
+            
+            execution_time = time.time() - start_time
+            self.logger.info(f"subprocess.run() 완료 - 실행 시간: {execution_time:.2f}초")
+            self.logger.info(f"subprocess 종료 코드: {result.returncode}")
+            
+            # 로그 파일 확인
+            log_file = self.log_dir / f"naver_subprocess_{review_id}.log"
+            subprocess_logs = ""
+            if log_file.exists():
+                try:
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        subprocess_logs = f.read()
+                        self.logger.info(f"서브프로세스 로그 파일 크기: {len(subprocess_logs)}바이트")
+                except Exception as e:
+                    self.logger.error(f"로그 파일 읽기 실패: {e}")
+            
+            # stdout/stderr 로그
+            if result.stdout:
+                self.logger.info(f"subprocess stdout:\n{result.stdout}")
+            if result.stderr:
+                self.logger.error(f"subprocess stderr:\n{result.stderr}")
+            
+            # 결과 처리
+            if result.returncode == 0:
+                # JSON 응답 파싱 시도
+                try:
+                    response = json.loads(result.stdout)
+                    self.logger.info(f"JSON 응답 파싱 성공: {response}")
+                    if 'final_status' not in response:
+                        response['final_status'] = 'posted' if response.get('success') else 'failed'
+                    return response
+                except:
+                    # SUCCESS 키워드 확인
+                    if "SUCCESS" in result.stdout:
+                        self.logger.info("✅ 네이버 서브프로세스 성공")
+                        return {
+                            'success': True,
+                            'message': '답글이 성공적으로 등록되었습니다.',
+                            'execution_time': execution_time,
+                            'final_status': 'posted'
+                        }
+                    else:
+                        self.logger.warning("JSON 파싱 실패, 기본 실패 응답 반환")
+                        return {
+                            'success': False,
+                            'error': '응답 파싱 실패',
+                            'execution_time': execution_time,
+                            'final_status': 'failed'
+                        }
+            else:
+                error_msg = result.stderr or result.stdout or "알 수 없는 오류"
+                self.logger.error(f"❌ 네이버 서브프로세스 에러 (exit code: {result.returncode}): {error_msg}")
+                
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'logs': subprocess_logs,
+                    'execution_time': execution_time,
+                    'final_status': 'failed'
+                }
+                
+        except subprocess.TimeoutExpired:
+            self.logger.error("⏱️ 네이버 서브프로세스 타임아웃 (180초 초과)")
+            return {
+                'success': False,
+                'error': '처리 시간이 초과되었습니다. 다시 시도해주세요.',
+                'final_status': 'failed'
+            }
+        except Exception as e:
+            self.logger.error(f"💥 네이버 서브프로세스 실행 오류: {str(e)}")
+            self.logger.error(f"상세 에러:\n{traceback.format_exc()}")
+            return {
+                'success': False,
+                'error': str(e),
+                'final_status': 'failed'
+            }
+        finally:
+            self.logger.info(f"{'='*50}")
+            self.logger.info(f"=== 네이버 서브프로세스 종료: {review_id} ===")
+            self.logger.info(f"{'='*50}")
+
     def _parse_error_message(self, error_output: str, log_content: str) -> str:
         """에러 메시지 파싱 및 사용자 친화적 메시지 변환"""
         error_output_lower = error_output.lower()
@@ -793,9 +1331,216 @@ class ReplyPostingService:
                 'platform': 'baemin',
                 'final_status': 'failed'
             }
-
+        
+    async def _post_yogiyo_reply(
+        self,
+        review_data: Dict[str, Any],
+        store_config: Dict[str, Any],
+        reply_content: str
+    ) -> Dict[str, Any]:
+        """
+        요기요 답글 등록 - subprocess를 사용한 구현
+        
+        Args:
+            review_data: 리뷰 데이터
+            store_config: 매장 설정
+            reply_content: 답글 내용
+            
+        Returns:
+            Dict: 등록 결과
+        """
+        review_id = review_data.get('review_id', 'unknown')
+        
+        try:
+            self.logger.info(f"요기요 답글 등록 시작 (subprocess): review_id={review_id}")
+            
+            # store_config에 reply_content 추가
+            store_config['reply_content'] = reply_content
+            store_config['final_response'] = reply_content
+            store_config['ai_response'] = reply_content
+            
+            # review_data를 store_config에 병합
+            store_config.update({
+                'review_name': review_data.get('review_name', ''),
+                'rating': review_data.get('rating', 0),
+                'review_content': review_data.get('review_content', ''),
+                'review_date': review_data.get('review_date', ''),
+                'ordered_menu': review_data.get('ordered_menu', '')
+            })
+            
+            # subprocess 실행 (요기요 전용)
+            result = await self._run_yogiyo_subprocess_manager(review_id, store_config)
+            
+            if result['success']:
+                self.logger.info(f"요기요 답글 등록 성공: review_id={review_id}")
+                return {
+                    'success': True,
+                    'message': '답글이 성공적으로 등록되었습니다',
+                    'review_id': review_id,
+                    'platform': 'yogiyo',
+                    'final_status': result.get('final_status', 'posted')
+                }
+            else:
+                self.logger.warning(f"요기요 답글 등록 실패: review_id={review_id}, error={result.get('error')}")
+                return {
+                    'success': False,
+                    'error': result.get('error', '알 수 없는 오류'),
+                    'review_id': review_id,
+                    'platform': 'yogiyo',
+                    'final_status': result.get('final_status', 'failed')
+                }
+                
+        except Exception as e:
+            error_msg = f"요기요 답글 등록 중 예외: {str(e)}"
+            self.logger.error(f"{error_msg}\n{traceback.format_exc()}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'review_id': review_id,
+                'platform': 'yogiyo',
+                'final_status': 'failed'
+            }
+        
+    async def _post_coupang_reply(
+        self,
+        review_data: Dict[str, Any],
+        store_config: Dict[str, Any],
+        reply_content: str
+    ) -> Dict[str, Any]:
+        """
+        쿠팡이츠 답글 등록 - subprocess를 사용한 구현
+        
+        Args:
+            review_data: 리뷰 데이터
+            store_config: 매장 설정
+            reply_content: 답글 내용
+            
+        Returns:
+            Dict: 등록 결과
+        """
+        review_id = review_data.get('review_id', 'unknown')
+        
+        try:
+            self.logger.info(f"쿠팡이츠 답글 등록 시작 (subprocess): review_id={review_id}")
+            
+            # store_config에 reply_content 추가
+            store_config['reply_content'] = reply_content
+            store_config['final_response'] = reply_content
+            store_config['ai_response'] = reply_content
+            
+            # review_data를 store_config에 병합
+            store_config.update({
+                'review_name': review_data.get('review_name', ''),
+                'rating': review_data.get('rating', 0),
+                'review_content': review_data.get('review_content', ''),
+                'review_date': review_data.get('review_date', ''),
+                'ordered_menu': review_data.get('ordered_menu', '')
+            })
+            
+            # subprocess 실행 (쿠팡 전용)
+            result = await self._run_coupang_subprocess_manager(review_id, store_config)
+            
+            if result['success']:
+                self.logger.info(f"쿠팡이츠 답글 등록 성공: review_id={review_id}")
+                return {
+                    'success': True,
+                    'message': '답글이 성공적으로 등록되었습니다',
+                    'review_id': review_id,
+                    'platform': 'coupang',
+                    'final_status': result.get('final_status', 'posted')
+                }
+            else:
+                self.logger.warning(f"쿠팡이츠 답글 등록 실패: review_id={review_id}, error={result.get('error')}")
+                return {
+                    'success': False,
+                    'error': result.get('error', '알 수 없는 오류'),
+                    'review_id': review_id,
+                    'platform': 'coupang',
+                    'final_status': result.get('final_status', 'failed')
+                }
+                
+        except Exception as e:
+            error_msg = f"쿠팡이츠 답글 등록 중 예외: {str(e)}"
+            self.logger.error(f"{error_msg}\n{traceback.format_exc()}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'review_id': review_id,
+                'platform': 'coupang',
+                'final_status': 'failed'
+            }
+        
+    async def _post_naver_reply(
+        self,
+        review_data: Dict[str, Any],
+        store_config: Dict[str, Any],
+        reply_content: str
+    ) -> Dict[str, Any]:
+        """
+        네이버 플레이스 답글 등록 - subprocess를 사용한 구현
+        
+        Args:
+            review_data: 리뷰 데이터
+            store_config: 매장 설정
+            reply_content: 답글 내용
+            
+        Returns:
+            Dict: 등록 결과
+        """
+        review_id = review_data.get('review_id', 'unknown')
+        
+        try:
+            self.logger.info(f"네이버 답글 등록 시작 (subprocess): review_id={review_id}")
+            
+            # store_config에 reply_content 추가
+            store_config['reply_content'] = reply_content
+            store_config['final_response'] = reply_content
+            store_config['ai_response'] = reply_content
+            
+            # review_data를 store_config에 병합
+            store_config.update({
+                'review_name': review_data.get('review_name', ''),
+                'rating': review_data.get('rating', 0),
+                'review_content': review_data.get('review_content', ''),
+                'review_date': review_data.get('review_date', ''),
+                'ordered_menu': review_data.get('ordered_menu', '')
+            })
+            
+            # subprocess 실행 (네이버 전용)
+            result = await self._run_naver_subprocess_manager(review_id, store_config)
+            
+            if result['success']:
+                self.logger.info(f"네이버 답글 등록 성공: review_id={review_id}")
+                return {
+                    'success': True,
+                    'message': '답글이 성공적으로 등록되었습니다',
+                    'review_id': review_id,
+                    'platform': 'naver',
+                    'final_status': result.get('final_status', 'posted')
+                }
+            else:
+                self.logger.warning(f"네이버 답글 등록 실패: review_id={review_id}, error={result.get('error')}")
+                return {
+                    'success': False,
+                    'error': result.get('error', '알 수 없는 오류'),
+                    'review_id': review_id,
+                    'platform': 'naver',
+                    'final_status': result.get('final_status', 'failed')
+                }
+                
+        except Exception as e:
+            error_msg = f"네이버 답글 등록 중 예외: {str(e)}"
+            self.logger.error(f"{error_msg}\n{traceback.format_exc()}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'review_id': review_id,
+                'platform': 'naver',
+                'final_status': 'failed'
+            }
+    
     async def post_reply_to_platform(self, platform: str, review_id: str, 
-                                response_text: str, store_config: dict) -> dict:
+                                    response_text: str, store_config: dict) -> dict:
         """플랫폼별 답글 등록"""
         self.logger.info(f"플랫폼 답글 등록 시작: platform={platform}, review_id={review_id}")
         
@@ -837,6 +1582,123 @@ class ReplyPostingService:
                         'error': error_msg,
                         'final_status': result.get('final_status', 'failed')
                     }
+                    
+            elif platform == "coupang" or platform == "coupangeats":
+                # store_config에 response_text 추가 (쿠팡도 동일한 방식)
+                store_config['final_response'] = response_text
+                store_config['ai_response'] = response_text
+                store_config['response_text'] = response_text
+                
+                self.logger.info(f"쿠팡이츠 답글 등록 시작 (subprocess): review_id={review_id}")
+                
+                # platform_id, platform_pw, platform_code 확인
+                required_fields = ['platform_id', 'platform_pw', 'platform_code']
+                for field in required_fields:
+                    if field not in store_config:
+                        raise ValueError(f"필수 필드 누락: {field}")
+                
+                # subprocess 실행 (쿠팡 전용)
+                result = await self._run_coupang_subprocess_manager(review_id, store_config)
+                
+                if result['success']:
+                    self.logger.info(f"쿠팡이츠 답글 등록 성공: {result.get('message', '')}")
+                    return {
+                        'success': True,
+                        'message': result.get('message', '답글이 성공적으로 등록되었습니다.'),
+                        'final_status': result.get('final_status', 'posted')
+                    }
+                else:
+                    error_msg = result.get('error', '알 수 없는 오류가 발생했습니다.')
+                    self.logger.warning(f"쿠팡이츠 답글 등록 실패: review_id={review_id}, error={error_msg}")
+                    
+                    # 브라우저 관련 에러인 경우 재시도 가능 메시지 추가
+                    if 'browser' in error_msg.lower() or 'closed' in error_msg.lower():
+                        error_msg = "브라우저 연결이 끊어졌습니다. 다시 시도해주세요."
+                    
+                    return {
+                        'success': False,
+                        'error': error_msg,
+                        'final_status': result.get('final_status', 'failed')
+                    }
+                    
+            elif platform == "yogiyo":
+                # store_config에 response_text 추가
+                store_config['final_response'] = response_text
+                store_config['ai_response'] = response_text
+                store_config['response_text'] = response_text
+                store_config['reply_content'] = response_text
+                
+                self.logger.info(f"요기요 답글 등록 시작 (subprocess): review_id={review_id}")
+                
+                # platform_id, platform_pw, platform_code 확인
+                required_fields = ['platform_id', 'platform_pw', 'platform_code']
+                for field in required_fields:
+                    if field not in store_config:
+                        raise ValueError(f"필수 필드 누락: {field}")
+                
+                # subprocess 실행 (요기요 전용)
+                result = await self._run_yogiyo_subprocess_manager(review_id, store_config)
+                
+                if result['success']:
+                    self.logger.info(f"요기요 답글 등록 성공: {result.get('message', '')}")
+                    return {
+                        'success': True,
+                        'message': result.get('message', '답글이 성공적으로 등록되었습니다.'),
+                        'final_status': result.get('final_status', 'posted')
+                    }
+                else:
+                    error_msg = result.get('error', '알 수 없는 오류가 발생했습니다.')
+                    self.logger.warning(f"요기요 답글 등록 실패: review_id={review_id}, error={error_msg}")
+                    
+                    # 브라우저 관련 에러인 경우 재시도 가능 메시지 추가
+                    if 'browser' in error_msg.lower() or 'closed' in error_msg.lower():
+                        error_msg = "브라우저 연결이 끊어졌습니다. 다시 시도해주세요."
+                    
+                    return {
+                        'success': False,
+                        'error': error_msg,
+                        'final_status': result.get('final_status', 'failed')
+                    }
+
+            elif platform == "naver":
+                # store_config에 response_text 추가
+                store_config['final_response'] = response_text
+                store_config['ai_response'] = response_text
+                store_config['response_text'] = response_text
+                store_config['reply_content'] = response_text
+                
+                self.logger.info(f"네이버 답글 등록 시작 (subprocess): review_id={review_id}")
+                
+                # platform_id, platform_pw, platform_code 확인
+                required_fields = ['platform_id', 'platform_pw', 'platform_code']
+                for field in required_fields:
+                    if field not in store_config:
+                        raise ValueError(f"필수 필드 누락: {field}")
+                
+                # subprocess 실행 (네이버 전용)
+                result = await self._run_naver_subprocess_manager(review_id, store_config)
+                
+                if result['success']:
+                    self.logger.info(f"네이버 답글 등록 성공: {result.get('message', '')}")
+                    return {
+                        'success': True,
+                        'message': result.get('message', '답글이 성공적으로 등록되었습니다.'),
+                        'final_status': result.get('final_status', 'posted')
+                    }
+                else:
+                    error_msg = result.get('error', '알 수 없는 오류가 발생했습니다.')
+                    self.logger.warning(f"네이버 답글 등록 실패: review_id={review_id}, error={error_msg}")
+                    
+                    # 브라우저 관련 에러인 경우 재시도 가능 메시지 추가
+                    if 'browser' in error_msg.lower() or 'closed' in error_msg.lower():
+                        error_msg = "브라우저 연결이 끊어졌습니다. 다시 시도해주세요."
+                    
+                    return {
+                        'success': False,
+                        'error': error_msg,
+                        'final_status': result.get('final_status', 'failed')
+                    }
+            
             else:
                 return {
                     'success': False,

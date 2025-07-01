@@ -84,6 +84,89 @@ async def collect_reviews(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/{store_code}/debug")
+async def debug_store_reviews(
+    store_code: str,
+    current_user: User = Depends(get_current_user),
+    supabase: SupabaseService = Depends(get_supabase_service)
+):
+    """매장 리뷰 디버깅 정보 조회"""
+    try:
+        debug_info = {}
+        
+        # 1. 사용자 권한 정보
+        has_view_permission = await supabase.check_user_permission(
+            current_user.user_code,
+            store_code,
+            'view'
+        )
+        debug_info['user_permission'] = {
+            'user_code': current_user.user_code,
+            'has_view_permission': has_view_permission
+        }
+        
+        # 2. 매장 정보 확인
+        store_query = supabase.client.table('platform_reply_rules').select('*').eq('store_code', store_code)
+        store_response = await supabase._execute_query(store_query)
+        debug_info['store_exists'] = bool(store_response.data)
+        debug_info['store_owner'] = store_response.data[0].get('owner_user_code') if store_response.data else None
+        
+        # 3. 전체 리뷰 수 (조건 없이)
+        all_reviews_query = supabase.client.table('reviews').select('*', count='exact').eq('store_code', store_code)
+        all_reviews_response = await supabase._execute_query(all_reviews_query)
+        debug_info['total_reviews'] = all_reviews_response.count
+        
+        # 4. 플랫폼별 리뷰 수
+        platforms = ['naver', 'baemin', 'coupang', 'yogiyo']
+        platform_counts = {}
+        for platform in platforms:
+            platform_query = supabase.client.table('reviews').select('*', count='exact').eq('store_code', store_code).eq('platform', platform)
+            platform_response = await supabase._execute_query(platform_query)
+            platform_counts[platform] = platform_response.count
+        debug_info['platform_counts'] = platform_counts
+        
+        # 5. is_deleted 상태별 수
+        deleted_true_query = supabase.client.table('reviews').select('*', count='exact').eq('store_code', store_code).eq('is_deleted', True)
+        deleted_true_response = await supabase._execute_query(deleted_true_query)
+        
+        deleted_false_query = supabase.client.table('reviews').select('*', count='exact').eq('store_code', store_code).eq('is_deleted', False)
+        deleted_false_response = await supabase._execute_query(deleted_false_query)
+        
+        deleted_null_query = supabase.client.table('reviews').select('*', count='exact').eq('store_code', store_code).is_('is_deleted', 'null')
+        deleted_null_response = await supabase._execute_query(deleted_null_query)
+        
+        debug_info['is_deleted_stats'] = {
+            'true': deleted_true_response.count,
+            'false': deleted_false_response.count,
+            'null': deleted_null_response.count
+        }
+        
+        # 6. 최근 네이버 리뷰 샘플 (5개)
+        naver_sample_query = supabase.client.table('reviews').select('review_id, platform, rating, review_date, is_deleted, created_at, review_name').eq('store_code', store_code).eq('platform', 'naver').order('created_at', desc=True).limit(5)
+        naver_sample_response = await supabase._execute_query(naver_sample_query)
+        debug_info['naver_samples'] = naver_sample_response.data
+        
+        # 7. API 호출과 동일한 조건으로 조회
+        api_query = supabase.client.table('reviews').select('*').eq('store_code', store_code).or_('is_deleted.is.null,is_deleted.eq.false').order('review_date', desc=True).limit(20)
+        api_response = await supabase._execute_query(api_query)
+        debug_info['api_query_result'] = {
+            'count': len(api_response.data or []),
+            'platforms': {}
+        }
+        
+        if api_response.data:
+            for review in api_response.data:
+                platform = review.get('platform', 'unknown')
+                debug_info['api_query_result']['platforms'][platform] = debug_info['api_query_result']['platforms'].get(platform, 0) + 1
+        
+        return debug_info
+        
+    except Exception as e:
+        logger.error(f"디버그 조회 오류: {e}")
+        logger.exception("상세 오류:")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{store_code}", response_model=List[ReviewResponse])
 async def get_reviews(
     store_code: str,
@@ -104,6 +187,8 @@ async def get_reviews(
     - offset: 시작 위치
     """
     try:
+        logger.info(f"리뷰 조회 요청 - store_code: {store_code}, user: {current_user.user_code}")
+        
         # 권한 확인
         has_permission = await supabase.check_user_permission(
             current_user.user_code,  # 딕셔너리 접근 대신 속성 접근
@@ -111,7 +196,20 @@ async def get_reviews(
             'view'
         )
         
+        logger.info(f"권한 확인 결과: {has_permission}")
+        
         if not has_permission:
+            # 권한이 없을 때 더 자세한 정보 로깅
+            logger.warning(f"권한 없음 - user: {current_user.user_code}, store: {store_code}")
+            
+            # 매장 정보 확인
+            store_check = await supabase._execute_query(
+                supabase.client.table('platform_reply_rules')
+                .select('store_code, owner_user_code')
+                .eq('store_code', store_code)
+            )
+            logger.debug(f"매장 정보: {store_check.data}")
+            
             raise HTTPException(status_code=403, detail="해당 매장에 대한 권한이 없습니다")
         
         # 리뷰 조회
@@ -123,12 +221,19 @@ async def get_reviews(
             offset=offset
         )
         
+        logger.info(f"조회된 리뷰 수: {len(reviews)}")
+        
+        # 네이버 리뷰만 별도로 확인
+        naver_reviews = [r for r in reviews if r.get('platform') == 'naver']
+        logger.info(f"네이버 리뷰 수: {len(naver_reviews)}")
+        
         return [ReviewResponse(**review) for review in reviews]
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"리뷰 조회 오류: {e}")
+        logger.exception("상세 오류:")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -315,13 +420,21 @@ async def generate_reply(
                 is_selected=False
             )
             
+            # boss_review_needed, review_reason, urgency_score 추가
+            boss_review_needed = result.get('boss_review_needed', False)
+            review_reason = result.get('review_reason', '')
+            urgency_score = result.get('urgency_score', 0.3)
+            
             # 리뷰에 AI 답글 저장 (아직 등록하지는 않음)
             await supabase.update_review_status(
                 review_id=review_id,
                 status='generated',
                 reply_content=result['reply'],
                 reply_type='ai_auto',
-                reply_by='AI'
+                reply_by='AI',
+                boss_review_needed=boss_review_needed,
+                review_reason=review_reason,
+                urgency_score=urgency_score
             )
             
             return {
@@ -334,7 +447,12 @@ async def generate_reply(
                 "processing_time_ms": result['processing_time_ms'],
                 "token_usage": result['token_usage'],
                 "store_name": store_rules.get('store_name', ''),
-                "platform": store_rules.get('platform', '')
+                "platform": store_rules.get('platform', ''),
+                "boss_review_needed": boss_review_needed,
+                "review_reason": review_reason,
+                "urgency_score": urgency_score,
+                "total_attempts": result.get('total_attempts', 1),
+                "retry_count": result.get('retry_count', 0)
             }
         else:
             # 실패한 경우도 이력 저장
@@ -415,13 +533,21 @@ async def regenerate_reply(
                 is_selected=False
             )
             
+            # boss_review_needed, review_reason, urgency_score 추가
+            boss_review_needed = result.get('boss_review_needed', False)
+            review_reason = result.get('review_reason', '')
+            urgency_score = result.get('urgency_score', 0.3)
+            
             # 리뷰에 새로운 AI 답글 저장
             await supabase.update_review_status(
                 review_id=review_id,
                 status='generated',
                 reply_content=result['reply'],
                 reply_type='ai_retry',
-                reply_by='AI'
+                reply_by='AI',
+                boss_review_needed=boss_review_needed,
+                review_reason=review_reason,
+                urgency_score=urgency_score
             )
             
             return {
@@ -433,7 +559,10 @@ async def regenerate_reply(
                 "is_valid": result['is_valid'],
                 "processing_time_ms": result['processing_time_ms'],
                 "token_usage": result['token_usage'],
-                "attempt_number": result.get('attempt_number', 1)
+                "attempt_number": result.get('attempt_number', 1),
+                "boss_review_needed": boss_review_needed,
+                "review_reason": review_reason,
+                "urgency_score": urgency_score
             }
         else:
             raise HTTPException(
@@ -562,4 +691,57 @@ async def select_reply(
         raise
     except Exception as e:
         logger.error(f"답글 선택 오류: {e}")
-        raise HTTPException(status_code=500, detail=str(e))# Step 4: ReplyPostingService API Endpoints 
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# 사장님 확인 필요 리뷰 조회 엔드포인트 추가
+@router.get("/boss-review-needed/{store_code}")
+async def get_boss_review_needed(
+    store_code: str,
+    urgency_level: Optional[str] = Query(None, description="긴급도 필터 (low, medium, high, critical)"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    supabase: SupabaseService = Depends(get_supabase_service)
+):
+    """
+    사장님 확인 필요 리뷰 조회
+    
+    - store_code: 매장 코드
+    - urgency_level: 긴급도 필터
+    - limit: 조회 개수
+    - offset: 시작 위치
+    """
+    try:
+        # 권한 확인
+        has_permission = await supabase.check_user_permission(
+            current_user.user_code,
+            store_code,
+            'view'
+        )
+        
+        if not has_permission:
+            raise HTTPException(status_code=403, detail="해당 매장에 대한 권한이 없습니다")
+        
+        # 사장님 확인 필요 리뷰 조회
+        query = supabase.client.table('reviews').select('*').eq('store_code', store_code).eq('boss_reply_needed', True)
+        
+        if urgency_level:
+            query = query.eq('urgency_level', urgency_level)
+        
+        # 긴급도 순으로 정렬 (critical > high > medium > low)
+        query = query.order('urgency_level', desc=False).order('created_at', desc=True)
+        
+        # 페이징
+        query = query.limit(limit).offset(offset)
+        
+        response = await supabase._execute_query(query)
+        reviews = response.data or []
+        
+        return [ReviewResponse(**review) for review in reviews]
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"사장님 확인 필요 리뷰 조회 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

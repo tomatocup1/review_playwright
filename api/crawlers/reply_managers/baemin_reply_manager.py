@@ -13,7 +13,22 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 from pathlib import Path
 import re
 import json
-from ..utils.error_handler import log_login_error, log_reply_error, ErrorType
+# from ..utils.error_handler import log_login_error, log_reply_error, ErrorType  # 임시 주석 처리
+
+# 임시 더미 클래스 및 함수
+class ErrorType:
+    UI_CHANGED = "UI_CHANGED"
+    INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
+    ACCOUNT_LOCKED = "ACCOUNT_LOCKED"
+    CAPTCHA_REQUIRED = "CAPTCHA_REQUIRED"
+    ELEMENT_NOT_FOUND = "ELEMENT_NOT_FOUND"
+    REPLY_INPUT_NOT_FOUND = "REPLY_INPUT_NOT_FOUND"
+
+async def log_login_error(**kwargs):
+    logger.error(f"Login error: {kwargs}")
+
+async def log_reply_error(**kwargs):
+    logger.error(f"Reply error: {kwargs}")
 
 # 로깅 설정
 logging.basicConfig(
@@ -39,7 +54,106 @@ class BaeminReplyManager:
         self.is_logged_in = False
         self.playwright = None
         logger.info(f"배민 매니저 초기화 (Context provided: {self.is_context_provided})")
-        
+    
+    async def close_popup(self):
+        """팝업 닫기 - 다양한 기간의 '보지 않기' 옵션 처리"""
+        try:
+            # 팝업이 나타날 때까지 잠시 대기
+            await asyncio.sleep(2)
+            
+            # 우선순위: 더 긴 기간의 "보지 않기" 버튼을 먼저 찾아서 클릭
+            priority_selectors = [
+                # 긴 기간부터 우선적으로 처리
+                ('button:has-text("30일간 보지 않기")', '30일간'),
+                ('span:has-text("30일간 보지 않기")', '30일간'),
+                ('button:has-text("7일간 보지 않기")', '7일간'),
+                ('span:has-text("7일간 보지 않기")', '7일간'),
+                ('button:has-text("3일 동안 보지 않기")', '3일 동안'),
+                ('span:has-text("3일 동안 보지 않기")', '3일 동안'),
+                ('button:has-text("1일간 보지 않기")', '1일간'),
+                ('span:has-text("1일간 보지 않기")', '1일간'),
+                ('button:has-text("오늘 하루 보지 않기")', '오늘 하루'),
+                ('span:has-text("오늘 하루 보지 않기")', '오늘 하루')
+            ]
+            
+            # 먼저 우선순위 선택자로 시도
+            for selector, period in priority_selectors:
+                try:
+                    element = await self.page.query_selector(selector)
+                    if element and await element.is_visible():
+                        await element.click()
+                        logger.info(f"팝업을 닫았습니다: {period} 보지 않기")
+                        await asyncio.sleep(1)
+                        return True
+                except:
+                    continue
+            
+            # "보지 않기"가 포함된 모든 요소를 찾아서 처리
+            try:
+                # 모든 버튼과 span 요소 확인
+                elements = await self.page.query_selector_all('button, span')
+                for element in elements:
+                    try:
+                        text = await element.text_content()
+                        if text and "보지 않기" in text and await element.is_visible():
+                            await element.click()
+                            logger.info(f"팝업을 닫았습니다: {text.strip()}")
+                            await asyncio.sleep(1)
+                            return True
+                    except:
+                        continue
+            except:
+                pass
+                
+            logger.debug("닫을 팝업이 없거나 이미 닫혀있습니다")
+            return False
+            
+        except Exception as e:
+            logger.debug(f"팝업 처리 중 예외 발생: {str(e)}")
+            return False
+
+    async def handle_popups(self):
+        """모든 종류의 팝업 처리"""
+        try:
+            # 먼저 "보지 않기" 타입 팝업 처리 시도
+            await self.close_popup()
+            
+            # 추가적인 팝업 처리 (닫기, 확인 등)
+            await asyncio.sleep(1)
+            
+            # 다양한 팝업 닫기 버튼 선택자
+            popup_close_selectors = [
+                'button:has-text("닫기")',
+                'button:has-text("확인")',
+                '[aria-label="Close"]',
+                '[aria-label="닫기"]',
+                '.close-button',
+                '.popup-close',
+                'button.close',
+                'button[aria-label="close"]',
+                'button[aria-label="닫기"]',
+                '[role="button"][aria-label="close"]'
+            ]
+            
+            closed_count = 0
+            for selector in popup_close_selectors:
+                try:
+                    elements = await self.page.query_selector_all(selector)
+                    for element in elements:
+                        if await element.is_visible():
+                            await element.click()
+                            closed_count += 1
+                            logger.info(f"추가 팝업 닫기: {selector}")
+                            await asyncio.sleep(0.5)
+                except:
+                    continue
+            
+            if closed_count > 0:
+                logger.info(f"추가로 {closed_count}개의 팝업을 닫았습니다")
+                
+        except Exception as e:
+            logger.debug(f"팝업 처리 중 예외 발생: {str(e)}")
+    
     async def __aenter__(self):
         await self.initialize()
         return self
@@ -353,6 +467,9 @@ class BaeminReplyManager:
             if 'reviews' in current_url:
                 logger.info("리뷰 페이지 도착 성공")
                 
+                # 팝업 처리 추가
+                await self.handle_popups()
+
                 # 미답변 탭 클릭 시도
                 try:
                     no_comment_tab = await self.page.wait_for_selector('#no-comment', timeout=5000)

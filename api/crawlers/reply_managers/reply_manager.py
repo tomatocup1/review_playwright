@@ -10,7 +10,7 @@ from playwright.sync_api import sync_playwright, Browser, Page
 import time
 import traceback
 import sys
-from api.utils.playwright_helper import setup_playwright_env, get_chromium_executable
+# from api.utils.playwright_helper import setup_playwright_env, get_chromium_executable  # 임시 주석 처리
 
 class BaseReplyManager(ABC):
     """
@@ -70,7 +70,7 @@ class BaseReplyManager(ABC):
                 asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
             
             # Playwright 환경 설정
-            setup_playwright_env()
+            # setup_playwright_env()  # 임시 주석 처리
             
             self.playwright = sync_playwright().start()
             
@@ -95,7 +95,8 @@ class BaseReplyManager(ABC):
                 self.logger.warning(f"Chromium launch failed: {e}")
                 
                 # 실행 파일 경로 직접 지정
-                chrome_path = get_chromium_executable()
+                # chrome_path = get_chromium_executable()  # 임시 주석 처리
+                chrome_path = None  # 기본값 사용
                 if chrome_path and os.path.exists(chrome_path):
                     launch_options["executable_path"] = chrome_path
                     self.logger.info(f"Using chromium at: {chrome_path}")

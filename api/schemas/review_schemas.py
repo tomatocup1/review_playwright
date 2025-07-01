@@ -29,9 +29,9 @@ class ReviewResponse(BaseModel):
     platform: str
     platform_code: str
     review_name: str
-    rating: int
+    rating: Optional[int] = None  # int에서 Optional[int]로 변경
     review_content: str
-    ordered_menu: Optional[Union[str, List[str]]] = None  # str 또는 List[str] 허용
+    ordered_menu: Optional[Union[str, List[str]]] = None
     delivery_review: Optional[str] = None
     review_date: str
     review_images: Optional[List[str]] = []
@@ -39,6 +39,8 @@ class ReviewResponse(BaseModel):
     final_response: Optional[str] = None
     response_at: Optional[datetime] = None
     boss_reply_needed: bool
+    review_reason: Optional[str] = None
+    urgency_level: Optional[str] = None  # 추가 (low, medium, high, critical)
     created_at: datetime
     
     @field_validator('ordered_menu', mode='before')

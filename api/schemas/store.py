@@ -11,6 +11,7 @@ class PlatformEnum(str, Enum):
     BAEMIN = "baemin"
     YOGIYO = "yogiyo"
     COUPANG = "coupang"
+    NAVER = "naver"
 
 class StoreStatus(str, Enum):
     """매장 상태"""
@@ -169,3 +170,4 @@ class StoreCrawlRequest(BaseModel):
     platform_id: str
     platform_pw: str
     platform_code: Optional[str] = None  # 특정 매장만 선택하려는 경우
+    headless: bool = True  # 추가 - 브라우저 숨김 모드 설정 (기본값 True)

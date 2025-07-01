@@ -18,6 +18,8 @@ from httpx import RemoteProtocolError, ConnectError, TimeoutException
 from api.schemas.auth import User, TokenData
 from config.supabase_client import get_supabase_client
 from api.services.supabase_service import SupabaseService
+from api.services.reply_posting_service import ReplyPostingService
+from api.services.reply_posting_service import ReplyPostingService
 
 load_dotenv()
 
@@ -183,3 +185,13 @@ async def get_admin_user(current_user: User = Depends(get_current_user)) -> User
 def get_supabase_service() -> SupabaseService:
     """Supabase 서비스 의존성"""
     return SupabaseService()
+
+
+def get_database_service() -> SupabaseService:
+    """데이터베이스 서비스 의존성 (SupabaseService를 사용)"""
+    return SupabaseService()
+
+
+def get_reply_posting_service(supabase_service: SupabaseService = Depends(get_supabase_service)) -> ReplyPostingService:
+    """답글 등록 서비스 의존성"""
+    return ReplyPostingService(supabase_service)
