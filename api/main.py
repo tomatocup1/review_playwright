@@ -94,6 +94,15 @@ app.include_router(stores.router)
 app.include_router(pages.router)
 app.include_router(reviews.router)
 
+# 디버깅용 - 등록된 라우트 출력
+@app.on_event("startup")
+async def startup_event():
+    routes = []
+    for route in app.routes:
+        if hasattr(route, "path"):
+            routes.append(f"{route.methods} {route.path}")
+    logger.info(f"Registered routes: {routes}")
+    
 # Step 4: 새로운 라우터 등록
 app.include_router(reply_posting_endpoints.router)
 app.include_router(reply_status.router)

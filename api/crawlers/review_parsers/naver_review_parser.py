@@ -73,6 +73,45 @@ class NaverReviewParser:
             logger.error(f"날짜 파싱 실패 - date_text: {date_text}, error: {e}")
             return datetime.now().strftime('%Y-%m-%d')
     
+    def parse_naver_reply_date(self, date_text: str) -> str:
+        """
+        네이버 답글 날짜 형식을 YYYY-MM-DD HH:MM 형식으로 변환
+        예: "2025. 6. 28(토) 오후 6:00" -> "2025-06-28 18:00"
+        
+        Args:
+            date_text: 네이버 답글 날짜 텍스트
+            
+        Returns:
+            str: YYYY-MM-DD HH:MM 형식의 날짜시간
+        """
+        try:
+            # 요일 제거: '2025. 6. 28(토) 오후 6:00' -> '2025. 6. 28 오후 6:00'
+            date_text = re.sub(r'\([가-힣]\)', '', date_text).strip()
+            
+            # 오전/오후 처리
+            is_pm = '오후' in date_text
+            date_text = date_text.replace('오전', '').replace('오후', '').strip()
+            
+            # '2025. 6. 28 6:00' 형식 파싱
+            parts = date_text.split()
+            year = parts[0].rstrip('.')
+            month = parts[1].rstrip('.').zfill(2)
+            day = parts[2].zfill(2)
+            time_parts = parts[3].split(':')
+            hour = int(time_parts[0])
+            minute = time_parts[1]
+            
+            # 오후 시간 변환
+            if is_pm and hour != 12:
+                hour += 12
+            elif not is_pm and hour == 12:
+                hour = 0
+                
+            return f"{year}-{month}-{day} {hour:02d}:{minute}"
+        except Exception as e:
+            logger.error(f"답글 날짜 파싱 실패 - date_text: {date_text}, error: {e}")
+            return None
+    
     async def parse_review_element(self, page: Page, review_element: ElementHandle, store_code: str) -> Optional[Dict]:
         """
         리뷰 DOM 요소에서 데이터 추출
@@ -134,10 +173,44 @@ class NaverReviewParser:
                 if keyword_text:
                     keywords.append(keyword_text.strip())
             
-            # 답글 여부 확인
-            reply_elem = await review_element.query_selector('div.pui__ogNNXj')  # 사장님 답글 영역
-            has_reply = reply_elem is not None
-            response_status = 'posted' if has_reply else 'pending'
+            # ===== 중요한 수정 부분 시작 =====
+            # 답글 확인 로직 개선
+            response_status = 'pending'  # 기본값
+            ai_response = None
+            response_at = None
+            
+            # 1. 답글 쓰기 버튼 확인
+            reply_write_button = await review_element.query_selector('button[data-area-code="rv.replywrite"]')
+            
+            if reply_write_button:
+                # 답글 쓰기 버튼이 있으면 답글이 없는 상태
+                response_status = 'pending'
+                logger.debug(f"답글 쓰기 버튼 발견 - 답글 없음")
+            else:
+                # 2. 답글 쓰기 버튼이 없으면 답글 영역 확인
+                reply_container = await review_element.query_selector('div.pui__GbW8H7.pui__BDGQvd')
+                
+                if reply_container:
+                    # 답글이 달려있는 경우
+                    response_status = 'posted'
+                    
+                    # 답글 내용 추출
+                    reply_content_elem = await reply_container.query_selector('a[data-pui-click-code="rv.replyfold"]')
+                    if reply_content_elem:
+                        ai_response = await reply_content_elem.inner_text()
+                        logger.debug(f"답글 내용 추출: {ai_response[:50]}...")
+                    
+                    # 답글 작성 시간 추출
+                    reply_time_elem = await reply_container.query_selector('time')
+                    if reply_time_elem:
+                        reply_time_text = await reply_time_elem.inner_text()
+                        response_at = self.parse_naver_reply_date(reply_time_text)
+                        logger.debug(f"답글 작성 시간: {reply_time_text} -> {response_at}")
+                else:
+                    # 답글 쓰기 버튼도 없고 답글도 없는 경우 (예외 상황)
+                    response_status = 'no_button'
+                    logger.warning(f"답글 쓰기 버튼과 답글 모두 없음 - 리뷰어: {reviewer_name}")
+            # ===== 중요한 수정 부분 끝 =====
             
             # 리뷰 ID 생성
             review_id = self.generate_review_id(store_code, review_content, reviewer_name)
@@ -165,12 +238,12 @@ class NaverReviewParser:
                 'review_category': None,
                 'keywords': keywords,  # 키워드는 별도 필드에 저장
                 'urgency_level': 'low',
-                'ai_response': None,
+                'ai_response': ai_response,  # 수정됨
                 'manual_response': None,
                 'final_response': None,
-                'response_status': response_status,
+                'response_status': response_status,  # 수정됨
                 'response_method': None,
-                'response_at': None,
+                'response_at': response_at,  # 수정됨
                 'response_by': None,
                 'response_quality_score': None,
                 'customer_reaction': None,
@@ -188,14 +261,15 @@ class NaverReviewParser:
                 'notes': None
             }
             
-            logger.debug(f"파싱된 네이버 리뷰: {reviewer_name} - {rating}점 - {review_date}")
+            logger.debug(f"파싱된 네이버 리뷰: {reviewer_name} - {rating}점 - {review_date} - 답글상태: {response_status}")
             return db_format
             
         except Exception as e:
             logger.error(f"리뷰 요소 파싱 오류: {e}")
             logger.exception("상세 오류:")
             return None
-    
+        
+  
     async def save_reviews(self, reviews: List[Dict], store_code: str) -> Dict:
         """리뷰 저장"""
         try:
