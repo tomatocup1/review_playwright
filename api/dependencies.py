@@ -17,8 +17,8 @@ from httpx import RemoteProtocolError, ConnectError, TimeoutException
 
 from api.schemas.auth import User, TokenData
 from config.supabase_client import get_supabase_client
+from config.openai_client import get_openai_client
 from api.services.supabase_service import SupabaseService
-from api.services.reply_posting_service import ReplyPostingService
 from api.services.reply_posting_service import ReplyPostingService
 
 load_dotenv()
@@ -195,3 +195,8 @@ def get_database_service() -> SupabaseService:
 def get_reply_posting_service(supabase_service: SupabaseService = Depends(get_supabase_service)) -> ReplyPostingService:
     """답글 등록 서비스 의존성"""
     return ReplyPostingService(supabase_service)
+
+def get_openai_client():
+    """OpenAI 클라이언트 의존성"""
+    from config.openai_client import get_openai_client as _get_openai_client
+    return _get_openai_client()

@@ -41,6 +41,10 @@ class ReplyPostingService:
         self.supabase = supabase_service
         self.logger = logger
         
+        # 암호화 서비스 초기화
+        from api.services.encryption import get_encryption_service
+        self.encryption = get_encryption_service()
+        
         # 실제 운영 설정값들
         self.MAX_RETRY_COUNT = 3
         self.RETRY_DELAY_SECONDS = 5
@@ -427,9 +431,21 @@ class ReplyPostingService:
             self.logger.info(f"매장 설정 조회 성공: store_code={store_code}, platform={store_data.get('platform')}")
             return store_data
             
-        except Exception as e:
+            except Exception as e:
             self.logger.error(f"매장 설정 조회 중 오류: {e}")
             return None
+            
+            async def _get_store_info(self, store_code: str) -> Optional[Dict[str, Any]]:
+            """
+            매장 정보 조회 (_get_store_config와 동일한 기능)
+            
+            Args:
+            store_code: 매장 코드
+            
+            Returns:
+            Dict: 매장 정보
+            """
+            return await self._get_store_config(store_code)
 
     async def _perform_reply_posting(
         self,
@@ -1824,7 +1840,132 @@ class ReplyPostingService:
         except Exception as e:
             self.logger.error(f"매장 답글 일괄 처리 중 오류: {e}")
             return {'success': False, 'store_code': store_code, 'error': str(e)}
+        
+    async def post_all_pending_replies(self) -> Dict[str, Any]:
+        """모든 대기 중인 답글을 플랫폼별로 그룹화하여 일괄 등록"""
+        try:
+            # 대기 중인 답글 조회 (generated 상태)
+            # execute()가 이미 동기식이므로 await 제거
+            pending_reviews = self.supabase.client.table('reviews').select(
+                '*'
+            ).eq(
+                'response_status', 'generated'
+            ).execute()
+            
+            if not pending_reviews.data:
+                return {"success": True, "message": "대기 중인 답글이 없습니다"}
+            
+            # 플랫폼별, store_code별로 그룹화
+            grouped_reviews = {}
+            for review in pending_reviews.data:
+                key = f"{review['platform']}_{review['store_code']}"
+                if key not in grouped_reviews:
+                    grouped_reviews[key] = []
+                grouped_reviews[key].append(review)
+            
+            # 각 그룹별로 일괄 처리
+            total_posted = 0
+            failed_count = 0
+            
+            for key, reviews in grouped_reviews.items():
+                platform, store_code = key.split('_', 1)
+                
+                try:
+                    result = await self.post_replies_for_store(store_code, reviews)
+                    if result['success']:
+                        total_posted += result.get('posted_count', 0)
+                    else:
+                        failed_count += len(reviews)
+                        
+                except Exception as e:
+                    logger.error(f"매장 {store_code} 답글 등록 실패: {str(e)}")
+                    failed_count += len(reviews)
+            
+            return {
+                "success": True,
+                "total_posted": total_posted,
+                "failed_count": failed_count,
+                "groups_processed": len(grouped_reviews)
+            }
+            
+        except Exception as e:
+            logger.error(f"답글 일괄 등록 중 오류: {str(e)}")
+            return {"success": False, "error": str(e)}
 
+    async def post_replies_for_store(self, store_code: str, reviews: List[Dict]) -> Dict:
+        """특정 매장의 여러 리뷰에 대한 답글을 한 번의 로그인으로 일괄 등록"""
+            
+        if not reviews:
+            return {"success": True, "posted_count": 0}
+        
+        platform = reviews[0]['platform'].lower()
+        
+        # 매장 정보 조회
+        store_info = await self._get_store_info(store_code)
+        if not store_info:
+            return {"success": False, "error": "Store not found"}
+        
+        # 플랫폼별 서브프로세스 스크립트 선택
+        script_map = {
+            'baemin': 'baemin_subprocess.py',
+            'yogiyo': 'yogiyo_subprocess.py',
+            'coupang': 'coupang_subprocess.py',
+            'naver': 'naver_subprocess.py'
+        }
+        
+        script_name = script_map.get(platform)
+        if not script_name:
+            return {"success": False, "error": f"Unsupported platform: {platform}"}
+        
+        # 복호화
+        decrypted_id = self.encryption.decrypt(store_info['platform_id'])
+        decrypted_pw = self.encryption.decrypt(store_info['platform_pw'])
+        
+        # 일괄 처리용 데이터 구성
+        batch_data = {
+            "platform_id": decrypted_id,
+            "platform_pw": decrypted_pw,
+            "platform_code": store_info['platform_code'],
+            "reviews": [
+                {
+                    "review_id": r["review_id"],
+                    "reply_content": r.get("final_response") or r.get("ai_response")
+                }
+                for r in reviews if r.get("ai_response") or r.get("final_response")
+            ]
+        }
+        
+        # 서브프로세스 실행
+        script_path = Path(__file__).parent / "platforms" / script_name
+        cmd = [sys.executable, str(script_path), json.dumps(batch_data, ensure_ascii=False)]
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5분 타임아웃
+            )
+            
+            if "SUCCESS" in result.stdout:
+                # 모든 리뷰 상태 업데이트
+                for review in batch_data["reviews"]:
+                    await self._update_review_status_simple(
+                        review["review_id"], 
+                        'posted', 
+                        'batch_system'
+                    )
+                
+                return {"success": True, "posted_count": len(batch_data["reviews"])}
+            else:
+                error_msg = result.stderr or result.stdout or "Unknown error"
+                return {"success": False, "error": error_msg}
+                
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Process timeout"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        
     async def process_all_stores_replies(self, user_code: str, max_per_store: int = 5) -> Dict[str, Any]:
         """모든 활성 매장의 답글들을 일괄 처리"""
         try:

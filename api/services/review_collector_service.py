@@ -82,9 +82,9 @@ class ReviewCollectorService:
                 
                 # 사용량 업데이트
                 if result['collected'] > 0:
-                    await self.supabase.update_usage_tracking(
+                    await self.supabase.update_usage(
                         store_info['owner_user_code'],
-                        reviews_increment=result['collected']
+                        reviews_processed=result['collected']
                     )
             else:
                 result['errors'].append(collect_result.get('error', '알 수 없는 오류'))
@@ -115,30 +115,29 @@ class ReviewCollectorService:
         try:
             logger.info(f"배민 리뷰 수집 시작 - 매장: {store_info['store_name']}")
             
-            # BaeminSyncReviewCrawler 사용
-            from api.crawlers.review_crawlers.baemin_sync_review_crawler import BaeminSyncReviewCrawler
+            # BaeminReviewCrawler 사용 (비동기 버전)
+            from api.crawlers.review_crawlers.baemin_review_crawler import BaeminReviewCrawler
             
             # 크롤러 초기화
-            crawler = BaeminSyncReviewCrawler(headless=True)
+            crawler = BaeminReviewCrawler(headless=True)
             
             try:
                 # 브라우저 시작
-                crawler.start_browser()
+                await crawler.start()
                 
                 # 로그인
                 decrypted_id = self.encryption.decrypt(store_info['platform_id'])
                 decrypted_pw = self.encryption.decrypt(store_info['platform_pw'])
                 
-                login_success = crawler.login(decrypted_id, decrypted_pw)
+                login_success = await crawler.login(decrypted_id, decrypted_pw)
                 if not login_success:
                     logger.error("배민 로그인 실패")
                     return {"success": False, "error": "로그인 실패"}
                 
                 # 리뷰 수집
-                reviews = crawler.get_reviews(
-                    platform_code=store_info['platform_code'],
-                    store_code=store_info['store_code'],
-                    limit=50
+                reviews = await crawler.get_reviews(
+                    store_id=store_info['platform_code'],
+                    store_code=store_info['store_code']
                 )
                 
                 # 리뷰 저장
@@ -162,7 +161,11 @@ class ReviewCollectorService:
                 
             finally:
                 # 브라우저 종료
-                crawler.close_browser()
+                try:
+                    await crawler.close()
+                except AttributeError:
+                    # close 메서드가 없는 경우 처리
+                    pass
                 
         except Exception as e:
             logger.error(f"배민 리뷰 수집 실패: {str(e)}")
@@ -210,7 +213,11 @@ class ReviewCollectorService:
                 }
                 
             finally:
-                await crawler.close()
+                try:
+                    await crawler.close()
+                except AttributeError:
+                    # close 메서드가 없는 경우 처리
+                    pass
                 
         except Exception as e:
             logger.error(f"쿠팡이츠 리뷰 수집 실패: {str(e)}")
@@ -258,7 +265,11 @@ class ReviewCollectorService:
                 }
                 
             finally:
-                await crawler.close()
+                try:
+                    await crawler.close()
+                except AttributeError:
+                    # close 메서드가 없는 경우 처리
+                    pass
                 
         except Exception as e:
             logger.error(f"요기요 리뷰 수집 실패: {str(e)}")

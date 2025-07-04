@@ -265,7 +265,7 @@ class SupabaseService:
             }
             
         except Exception as e:
-            self.logger.error(f"리뷰 통계 조회 오류: {str(e)}")
+            logger.error(f"리뷰 통계 조회 오류: {str(e)}")
             # 오류 발생 시 기본값 반환
             return {
                 'total_reviews': 0,
@@ -327,6 +327,19 @@ class SupabaseService:
             
         except Exception as e:
             logger.error(f"매장 목록 조회 오류: {e}")
+            return []
+    
+    async def get_active_stores(self) -> List[Dict[str, Any]]:
+        """모든 활성 매장 목록 조회"""
+        try:
+            response = await self._execute_query(
+                self.client.table('platform_reply_rules')
+                .select('*')
+                .eq('is_active', True)
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"활성 매장 조회 오류: {e}")
             return []
     
     async def get_review_by_id(self, review_id: str) -> Optional[Dict[str, Any]]:
@@ -615,8 +628,152 @@ class SupabaseService:
         except Exception as e:
             logger.error(f"리뷰 답글 업데이트 오류: {e}")
             return False
-        
-        # 파일 끝에 추가
+
+    async def get_reviews_without_reply(self) -> List[Dict]:
+        """AI 답글이 생성되지 않은 리뷰 목록 조회"""
+        try:
+            # self.supabase.table 대신 self.client.table 사용
+            response = self.client.table('reviews').select(
+                'review_id, store_code, review_content, rating, review_name'
+            ).eq(
+                'response_status', 'collected'
+            ).eq(
+                'boss_reply_needed', False  # 사장님 확인 필요한 것 제외
+            ).order(
+                'created_at', desc=False  # 오래된 것부터
+            ).limit(100).execute()  # 한 번에 최대 100개
+            
+            return response.data if response.data else []
+            
+        except Exception as e:
+            logger.error(f"답글 미생성 리뷰 조회 오류: {str(e)}")
+            return []
+
+    async def save_ai_reply(self, review_id: str, ai_response: str, quality_score: float = 0.8):
+        """AI 답글 저장 및 상태 업데이트"""
+        try:
+            # 리뷰 업데이트
+            update_data = {
+                'ai_response': ai_response,
+                'response_status': 'generated',
+                'response_quality_score': quality_score,
+                'processed_at': datetime.now().isoformat()
+            }
+            
+            response = await self._execute_query(
+                self.client.table('reviews').update(
+                    update_data
+                ).eq('review_id', review_id)
+            )
+            
+            # 생성 이력 저장
+            history_data = {
+                'review_id': review_id,
+                'generation_type': 'ai_initial',
+                'generated_content': ai_response,
+                'quality_score': quality_score,
+                'model_version': 'gpt-4o-mini',
+                'is_selected': True,
+                'created_at': datetime.now().isoformat()
+            }
+            
+            await self._execute_query(
+                self.client.table('reply_generation_history').insert(history_data)
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"AI 답글 저장 오류: {str(e)}")
+            return False
+
+    # 기타 메서드들...
+    async def get_store_by_code(self, store_code: str) -> Optional[Dict[str, Any]]:
+        """매장 코드로 매장 정보 조회"""
+        try:
+            response = await self._execute_query(
+                self.client.table('platform_reply_rules')
+                .select('*')
+                .eq('store_code', store_code)
+                .eq('is_active', True)
+            )
+            return response.data[0] if response.data else None
+        except Exception as e:
+            logger.error(f"매장 조회 오류: {e}")
+            return None
+
+    async def insert_review(self, review_data: Dict[str, Any]) -> bool:
+        """리뷰 데이터 삽입"""
+        try:
+            response = await self._execute_query(
+                self.client.table('reviews').insert(review_data)
+            )
+            return bool(response.data)
+        except Exception as e:
+            logger.error(f"리뷰 삽입 오류: {e}")
+            return False
+
+    async def check_review_exists(self, review_id: str) -> bool:
+        """리뷰 존재 여부 확인"""
+        try:
+            response = await self._execute_query(
+                self.client.table('reviews')
+                .select('review_id')
+                .eq('review_id', review_id)
+            )
+            return bool(response.data)
+        except Exception as e:
+            logger.error(f"리뷰 존재 확인 오류: {e}")
+            return False
+
+    async def update_usage(self, user_code: str, reviews_processed: int = 0) -> bool:
+        """사용량 업데이트 (UPSERT 방식)"""
+        try:
+            current_month = datetime.now().strftime('%Y-%m-01')
+            
+            # 먼저 기존 레코드 조회
+            existing = self.client.table('usage_tracking').select('*').eq(
+                'user_code', user_code
+            ).eq(
+                'tracking_month', current_month
+            ).execute()
+            
+            if existing.data:
+                # 기존 레코드가 있으면 UPDATE
+                update_data = {
+                    'reviews_processed': existing.data[0]['reviews_processed'] + reviews_processed,
+                    'last_updated': datetime.now().isoformat()
+                }
+                
+                response = self.client.table('usage_tracking').update(
+                    update_data
+                ).eq(
+                    'user_code', user_code
+                ).eq(
+                    'tracking_month', current_month
+                ).execute()
+            else:
+                # 없으면 INSERT
+                insert_data = {
+                    'user_code': user_code,
+                    'tracking_month': current_month,
+                    'reviews_processed': reviews_processed,
+                    'stores_count': 0,
+                    'last_updated': datetime.now().isoformat()
+                }
+                
+                response = self.client.table('usage_tracking').insert(
+                    insert_data
+                ).execute()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"사용량 업데이트 오류: {str(e)}")
+            return False
+
+
+# 파일 끝에 추가
 def get_supabase_client() -> Client:
     """
     Supabase 클라이언트 반환 (config에서 import)
@@ -624,3 +781,15 @@ def get_supabase_client() -> Client:
     """
     from config.supabase_client import get_supabase_client as get_client
     return get_client()
+
+# 싱글톤 인스턴스
+_supabase_service = None
+
+def get_supabase_service() -> SupabaseService:
+    """
+    Supabase 서비스 싱글톤 인스턴스 반환
+    """
+    global _supabase_service
+    if _supabase_service is None:
+        _supabase_service = SupabaseService()
+    return _supabase_service
