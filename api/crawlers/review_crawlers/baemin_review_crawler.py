@@ -30,7 +30,15 @@ class BaeminReviewCrawler(WindowsAsyncBaseCrawler):
         # 스크린샷 저장 경로
         self.screenshot_dir = Path("C:/Review_playwright/logs/screenshots/baemin_reviews")
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
-        
+    
+    async def start(self):
+        """브라우저 시작 (호환성을 위한 별칭)"""
+        await self.start_browser()
+    
+    async def close(self):
+        """브라우저 종료 (호환성을 위한 별칭)"""
+        await self.close_browser()
+
     async def login(self, username: str, password: str) -> bool:
         """배민 사장님 사이트 로그인"""
         try:
@@ -246,3 +254,18 @@ class BaeminReviewCrawler(WindowsAsyncBaseCrawler):
         except Exception as e:
             logger.error(f"답글 작성 중 오류: {str(e)}")
             return False
+        
+    async def get_store_list(self) -> List[Dict[str, Any]]:
+        """매장 목록 가져오기 (구현 필요시)"""
+        logger.warning("BaeminReviewCrawler.get_store_list() not implemented")
+        return []
+    
+    async def select_store(self, platform_code: str) -> bool:
+        """매장 선택 (구현 필요시)"""
+        logger.warning("BaeminReviewCrawler.select_store() not implemented")
+        return True
+    
+    async def get_store_info(self) -> Dict[str, Any]:
+        """매장 정보 가져오기 (구현 필요시)"""
+        logger.warning("BaeminReviewCrawler.get_store_info() not implemented")
+        return {}

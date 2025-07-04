@@ -41,10 +41,6 @@ class ReplyPostingService:
         self.supabase = supabase_service
         self.logger = logger
         
-        # 암호화 서비스 초기화
-        from api.services.encryption import get_encryption_service
-        self.encryption = get_encryption_service()
-        
         # 실제 운영 설정값들
         self.MAX_RETRY_COUNT = 3
         self.RETRY_DELAY_SECONDS = 5
@@ -431,21 +427,9 @@ class ReplyPostingService:
             self.logger.info(f"매장 설정 조회 성공: store_code={store_code}, platform={store_data.get('platform')}")
             return store_data
             
-            except Exception as e:
+        except Exception as e:
             self.logger.error(f"매장 설정 조회 중 오류: {e}")
             return None
-            
-            async def _get_store_info(self, store_code: str) -> Optional[Dict[str, Any]]:
-            """
-            매장 정보 조회 (_get_store_config와 동일한 기능)
-            
-            Args:
-            store_code: 매장 코드
-            
-            Returns:
-            Dict: 매장 정보
-            """
-            return await self._get_store_config(store_code)
 
     async def _perform_reply_posting(
         self,

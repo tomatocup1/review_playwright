@@ -54,6 +54,14 @@ class YogiyoAsyncReviewCrawler(WindowsAsyncBaseCrawler):
         if encryption_key:
             self.cipher_suite = Fernet(encryption_key.encode())
     
+    async def start(self):
+        """브라우저 시작 (호환성을 위한 별칭)"""
+        await self.start_browser()
+    
+    async def close(self):
+        """브라우저 종료 (호환성을 위한 별칭)"""
+        await self.close_browser()
+        
     def decrypt_password(self, encrypted_password: str) -> str:
         """암호화된 비밀번호 복호화"""
         if self.cipher_suite and encrypted_password:

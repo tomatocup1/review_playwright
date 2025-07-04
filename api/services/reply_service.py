@@ -13,7 +13,7 @@ from datetime import datetime
 from ..dependencies import get_supabase_client
 
 # 플랫폼별 답글 관리자
-from ..crawlers.baemin_reply_manager import BaeminReplyManager
+from api.crawlers.reply_managers.baemin_reply_manager import BaeminReplyManager
 
 class ReplyPostingService:
     """

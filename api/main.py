@@ -31,7 +31,7 @@ from config.openai_client import get_openai_client
 
 # Windows 전용 설정 - Playwright subprocess 지원을 위해 ProactorEventLoop 사용
 if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 nest_asyncio.apply()
 

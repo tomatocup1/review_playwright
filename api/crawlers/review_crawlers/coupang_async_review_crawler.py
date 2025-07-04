@@ -30,7 +30,14 @@ class CoupangAsyncReviewCrawler(CoupangCrawler):
         # 리뷰 스크린샷 저장 경로
         self.review_screenshot_dir = Path("C:/Review_playwright/logs/screenshots/coupang_reviews")
         self.review_screenshot_dir.mkdir(parents=True, exist_ok=True)
+    async def start(self):
+        """브라우저 시작 (호환성을 위한 별칭)"""
+        await self.start_browser()
     
+    async def close(self):
+        """브라우저 종료 (호환성을 위한 별칭)"""
+        await self.close_browser()
+        
     async def navigate_to_reviews(self, store_name: str = None) -> bool:
         """리뷰 페이지로 이동 및 매장 선택"""
         try:

@@ -123,7 +123,7 @@ class ReviewCollectorService:
             
             try:
                 # 브라우저 시작
-                await crawler.start()
+                await crawler.start_browser()
                 
                 # 로그인
                 decrypted_id = self.encryption.decrypt(store_info['platform_id'])
@@ -162,7 +162,7 @@ class ReviewCollectorService:
             finally:
                 # 브라우저 종료
                 try:
-                    await crawler.close()
+                    await crawler.close_browser()
                 except AttributeError:
                     # close 메서드가 없는 경우 처리
                     pass
@@ -181,7 +181,7 @@ class ReviewCollectorService:
             crawler = CoupangAsyncReviewCrawler(headless=True)
             
             try:
-                await crawler.start()
+                await crawler.start_browser()
                 
                 # 로그인
                 decrypted_id = self.encryption.decrypt(store_info['platform_id'])
@@ -214,7 +214,7 @@ class ReviewCollectorService:
                 
             finally:
                 try:
-                    await crawler.close()
+                    await crawler.close_browser()
                 except AttributeError:
                     # close 메서드가 없는 경우 처리
                     pass
@@ -233,7 +233,7 @@ class ReviewCollectorService:
             crawler = YogiyoAsyncReviewCrawler(headless=True)
             
             try:
-                await crawler.start()
+                await crawler.start_browser()
                 
                 # 로그인
                 decrypted_id = self.encryption.decrypt(store_info['platform_id'])
@@ -266,7 +266,7 @@ class ReviewCollectorService:
                 
             finally:
                 try:
-                    await crawler.close()
+                    await crawler.close_browser()
                 except AttributeError:
                     # close 메서드가 없는 경우 처리
                     pass
