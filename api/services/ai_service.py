@@ -34,6 +34,26 @@ class AIService:
         start_time = time.time()
         
         try:
+            # 파라미터 타입 체크 및 변환
+            if not isinstance(review_data, dict):
+                return {
+                    'success': False,
+                    'error': f'review_data must be a dictionary, got {type(review_data).__name__}',
+                    'reply': None,
+                    'quality_score': 0.0,
+                    'processing_time_ms': 0,
+                    'token_usage': 0
+                }
+            
+            if not isinstance(store_rules, dict):
+                return {
+                    'success': False,
+                    'error': f'store_rules must be a dictionary, got {type(store_rules).__name__}',
+                    'reply': None,
+                    'quality_score': 0.0,
+                    'processing_time_ms': 0,
+                    'token_usage': 0
+                }
             # 답글 생성 가능 여부 확인
             if not self._should_generate_reply(review_data, store_rules):
                 return {

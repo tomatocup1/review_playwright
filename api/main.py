@@ -29,9 +29,9 @@ from api.services.ai_service import AIService
 from api.services.supabase_service import SupabaseService, get_supabase_service
 from config.openai_client import get_openai_client
 
-# Windows 전용 설정 - Playwright subprocess 지원을 위해 ProactorEventLoop 사용
+# Windows에서 asyncio subprocess 문제 해결
 if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 nest_asyncio.apply()
 
@@ -138,48 +138,61 @@ async def startup_scheduler():
         # 1. 즉시 한 번 실행 (서버 시작 시)
         logger.info("=== 서버 시작 시 초기 작업 실행 ===")
         
-        # 먼저 리뷰 수집
+        # 먼저 리뷰 수집 (직접 실행)
         logger.info("1. 리뷰 수집 시작...")
-        asyncio.create_task(collect_all_reviews_job(review_service))
+        try:
+            result = await review_service.collect_all_stores_reviews()
+            logger.info(f"초기 리뷰 수집 완료: {result}")
+        except Exception as e:
+            logger.error(f"초기 리뷰 수집 실패: {str(e)}")
         
         # 10초 후 AI 답글 생성
         await asyncio.sleep(10)
         logger.info("2. AI 답글 생성 시작...")
-        asyncio.create_task(generate_ai_replies_job(ai_service, supabase_service))
+        try:
+            await generate_ai_replies_job(ai_service, supabase_service)
+        except Exception as e:
+            logger.error(f"초기 AI 답글 생성 실패: {str(e)}")
         
         # 20초 후 답글 등록
         await asyncio.sleep(10)
         logger.info("3. 답글 등록 시작...")
-        asyncio.create_task(post_replies_batch_job(reply_service))
+        try:
+            await post_replies_batch_job(reply_service)
+        except Exception as e:
+            logger.error(f"초기 답글 등록 실패: {str(e)}")
         
-        # 2. 정기 스케줄 설정 (테스트용 짧은 간격)
+        # 2. 정기 스케줄 설정 (AI 답글 생성이 답글 등록보다 우선)
         # 3분마다 리뷰 수집
         scheduler.add_job(
             collect_all_reviews_job,
             trigger=CronTrigger(minute="*/3"),
             id="review_collection",
-            args=[review_service]
+            args=[review_service],
+            name="리뷰 수집 작업"
         )
         
-        # 1분마다 AI 답글 생성
+        # 30초마다 AI 답글 생성 (우선순위 높임)
         scheduler.add_job(
             generate_ai_replies_job,
-            trigger=CronTrigger(minute="*/1"),
+            trigger=CronTrigger(second="*/30"),
             id="ai_reply_generation",
-            args=[ai_service, supabase_service]
+            args=[ai_service, supabase_service],
+            name="AI 답글 생성 작업"
         )
         
-        # 2분마다 답글 등록
+        # 2분마다 답글 등록 (AI 생성 후 실행)
         scheduler.add_job(
             post_replies_batch_job,
             trigger=CronTrigger(minute="*/2"),
             id="reply_posting",
-            args=[reply_service]
+            args=[reply_service],
+            name="답글 등록 작업"
         )
         
         scheduler.start()
         logger.info("=== 스케줄러가 시작되었습니다 ===")
-        logger.info("테스트 모드: 리뷰 수집(3분), AI 생성(1분), 답글 등록(2분) 간격")
+        logger.info("자동화 모드: 리뷰 수집(3분), AI 생성(30초), 답글 등록(2분) 간격")
         
     except Exception as e:
         logger.error(f"스케줄러 시작 실패: {str(e)}")
@@ -203,7 +216,7 @@ async def collect_all_reviews_job(review_service: ReviewCollectorService):
 
 # AI 답글 생성 작업
 async def generate_ai_replies_job(ai_service: AIService, supabase_service: SupabaseService):
-    """답글이 없는 리뷰에 대해 AI 답글을 생성하는 스케줄 작업"""
+    """새 리뷰에 대한 AI 답글 자동 생성"""
     try:
         logger.info("=== AI 답글 자동 생성 시작 ===")
         
@@ -211,33 +224,54 @@ async def generate_ai_replies_job(ai_service: AIService, supabase_service: Supab
         new_reviews = await supabase_service.get_reviews_without_reply()
         
         if not new_reviews:
-            logger.info("새로운 리뷰가 없습니다.")
+            logger.info("AI 답글 생성할 새 리뷰가 없습니다")
             return
+            
+        logger.info(f"{len(new_reviews)}개 리뷰에 대한 AI 답글 생성 시작")
         
-        logger.info(f"{len(new_reviews)}개의 새 리뷰에 대해 AI 답글 생성 시작")
-        
-        # 병렬로 AI 답글 생성 (최대 10개씩)
-        semaphore = asyncio.Semaphore(10)
+        # 병렬 처리를 위한 세마포어 (동시 5개)
+        semaphore = asyncio.Semaphore(5)
         
         async def generate_with_limit(review):
             async with semaphore:
-                return await generate_single_reply(ai_service, supabase_service, review)
+                try:
+                    # 매장 정책 조회
+                    policy = await supabase_service.get_store_reply_rules(review['store_code'])
+                    
+                    # AI 답글 생성
+                    reply_result = await ai_service.generate_reply(
+                        review_data=review,
+                        store_rules=policy
+                    )
+                    
+                    # DB에 저장
+                    if reply_result['success']:
+                        await supabase_service.save_ai_reply(
+                            review['review_id'],
+                            reply_result['reply'],
+                            'ai_generated'
+                        )
+                    else:
+                        # 답글 생성 실패시 로그 기록
+                        logger.error(f"답글 생성 실패: {reply_result.get('error', 'Unknown error')}")
+                        return {"success": False, "review_id": review['review_id'], "error": reply_result.get('error')}
+                    
+                    return {"success": True, "review_id": review['review_id']}
+                    
+                except Exception as e:
+                    logger.error(f"AI 답글 생성 실패 - review_id: {review['review_id']}, error: {str(e)}")
+                    return {"success": False, "review_id": review['review_id'], "error": str(e)}
         
-        tasks = []
-        for review in new_reviews:
-            task = asyncio.create_task(generate_with_limit(review))
-            tasks.append(task)
+        # 모든 리뷰 병렬 처리
+        tasks = [generate_with_limit(review) for review in new_reviews]
+        results = await asyncio.gather(*tasks)
         
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        success_count = sum(1 for r in results if r is True)
-        error_count = sum(1 for r in results if isinstance(r, Exception))
-        
-        logger.info(f"AI 답글 생성 완료: {success_count}/{len(new_reviews)} 성공, {error_count} 실패")
+        # 결과 집계
+        success_count = sum(1 for r in results if r and r.get('success', False))
+        logger.info(f"AI 답글 생성 완료: {success_count}/{len(new_reviews)} 성공")
         
     except Exception as e:
-        logger.error(f"AI 답글 생성 중 오류: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error(f"AI 답글 생성 작업 실패: {str(e)}")
 
 # 단일 리뷰 AI 답글 생성 헬퍼 함수
 async def generate_single_reply(ai_service: AIService, supabase_service: SupabaseService, review: dict):
@@ -294,23 +328,53 @@ async def generate_single_reply(ai_service: AIService, supabase_service: Supabas
         logger.error(f"리뷰 {review['review_id']} 답글 생성 실패: {str(e)}")
         raise
 
-# 답글 일괄 등록 작업
 async def post_replies_batch_job(reply_service: ReplyPostingService):
-    """대기 중인 답글을 일괄로 등록하는 스케줄 작업"""
+    """생성된 AI 답글을 일괄 등록"""
     try:
-        logger.info("=== 답글 자동 등록 시작 ===")
-        start_time = time.time()
+        logger.info("=== 답글 일괄 등록 시작 ===")
         
-        # 플랫폼별로 그룹화하여 처리
-        result = await reply_service.post_all_pending_replies()
+        # 등록 대기 중인 답글 조회
+        supabase = reply_service.supabase
         
-        elapsed_time = time.time() - start_time
-        logger.info(f"답글 등록 완료: {result} (소요시간: {elapsed_time:.2f}초)")
+        # generated 상태의 리뷰 조회
+        response = await supabase.client.table('reviews')\
+            .select('*')\
+            .eq('response_status', 'generated')\
+            .limit(10)\
+            .execute()
         
+        if not response.data:
+            logger.info("등록할 답글이 없습니다")
+            return
+        
+        reviews = response.data
+        logger.info(f"{len(reviews)}개의 답글 등록 시작")
+        
+        success_count = 0
+        fail_count = 0
+        
+        for review in reviews:
+            try:
+                # 답글 등록 시도
+                result = await reply_service.post_single_reply(
+                    review['review_id'],
+                    review.get('final_response') or review.get('ai_response', '')
+                )
+                
+                if result.get('success'):
+                    success_count += 1
+                else:
+                    fail_count += 1
+                    
+            except Exception as e:
+                logger.error(f"답글 등록 실패 - review_id: {review['review_id']}, error: {str(e)}")
+                fail_count += 1
+        
+        logger.info(f"답글 일괄 등록 완료: {success_count}개 성공, {fail_count}개 실패")
+            
     except Exception as e:
-        logger.error(f"답글 등록 중 오류: {str(e)}")
-        logger.error(traceback.format_exc())
-
+        logger.error(f"답글 일괄 등록 작업 실패: {str(e)}")
+        
 # 일일 통계 리포트 생성 (선택사항)
 async def generate_daily_report(supabase_service: SupabaseService):
     """매일 자정 통계 리포트 생성"""
