@@ -632,18 +632,61 @@ class SupabaseService:
     async def get_reviews_without_reply(self) -> List[Dict]:
         """AI 답글이 생성되지 않은 리뷰 목록 조회"""
         try:
-            # self.supabase.table 대신 self.client.table 사용
-            response = self.client.table('reviews').select(
-                'review_id, store_code, review_content, rating, review_name'
-            ).eq(
-                'response_status', 'collected'
-            ).eq(
-                'boss_reply_needed', False  # 사장님 확인 필요한 것 제외
-            ).order(
-                'created_at', desc=False  # 오래된 것부터
-            ).limit(100).execute()  # 한 번에 최대 100개
+            # 먼저 현재 데이터베이스 상태를 확인
+            logger.info("AI 답글이 필요한 리뷰 조회 시작...")
             
-            return response.data if response.data else []
+            # 단순한 조건으로 시작: ai_response가 없는 모든 리뷰
+            response = await self._execute_query(
+                self.client.table('reviews').select(
+                    'review_id, store_code, review_content, rating, review_name, platform, response_status, boss_reply_needed, ai_response, created_at, ordered_menu, review_date'
+                ).or_(
+                    'ai_response.is.null,ai_response.eq.'  # ai_response가 null이거나 빈 문자열
+                ).or_(
+                    'boss_reply_needed.is.null,boss_reply_needed.eq.false'  # boss_reply_needed가 null이거나 false
+                ).or_(
+                    'is_deleted.is.null,is_deleted.eq.false'  # is_deleted가 null이거나 false (있다면)
+                ).order(
+                    'created_at', desc=False  # 오래된 것부터
+                ).limit(50)  # 한 번에 최대 50개로 줄임
+            )
+            
+            logger.info(f"조회된 원본 리뷰 수: {len(response.data or [])}개")
+            
+            # 매장별 자동 답글 정책 확인하여 필터링
+            filtered_reviews = []
+            if response.data:
+                for review in response.data:
+                    try:
+                        # 매장 자동 답글 정책 확인
+                        store_rules = await self.get_store_reply_rules(review['store_code'])
+                        
+                        # 자동 답글이 활성화되어 있는지 확인
+                        if not store_rules.get('auto_reply_enabled', True):
+                            logger.debug(f"매장 {review['store_code']} 자동 답글 비활성화됨")
+                            continue
+                        
+                        # 별점별 자동 답글 설정 확인
+                        rating = review.get('rating')
+                        if rating and 1 <= rating <= 5:
+                            rating_key = f'rating_{rating}_reply'
+                            if store_rules.get(rating_key, True):  # 기본값은 True (답글 활성화)
+                                filtered_reviews.append(review)
+                                logger.debug(f"리뷰 {review['review_id']} AI 답글 생성 대상에 포함 (별점: {rating})")
+                            else:
+                                logger.debug(f"매장 {review['store_code']}의 {rating}점 리뷰 자동 답글 비활성화됨")
+                        else:
+                            # 별점이 없거나 유효하지 않은 경우 기본적으로 포함
+                            filtered_reviews.append(review)
+                            logger.debug(f"리뷰 {review['review_id']} AI 답글 생성 대상에 포함 (별점 없음)")
+                            
+                    except Exception as e:
+                        logger.error(f"리뷰 {review.get('review_id')} 필터링 중 오류: {str(e)}")
+                        # 오류 발생시 기본적으로 포함
+                        filtered_reviews.append(review)
+            
+            logger.info(f"AI 답글 생성 대상 리뷰: {len(filtered_reviews)}개 (필터링 전: {len(response.data or [])}개)")
+            
+            return filtered_reviews
             
         except Exception as e:
             logger.error(f"답글 미생성 리뷰 조회 오류: {str(e)}")

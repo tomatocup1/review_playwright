@@ -237,6 +237,10 @@ finally:
 '''
     
     # subprocess로 실행 - 실시간 출력을 위해 수정
+    # Windows 환경에서 한글 인코딩 문제 해결
+    env = os.environ.copy()
+    env['PYTHONIOENCODING'] = 'utf-8'
+    
     process = subprocess.Popen(
         [sys.executable, '-u', '-c', crawler_script],
         stdout=subprocess.PIPE,
@@ -244,7 +248,8 @@ finally:
         universal_newlines=True,
         encoding='utf-8',  # UTF-8로 변경
         bufsize=1,
-        errors='replace'  # 인코딩 에러 시 ?로 대체
+        errors='replace',  # 인코딩 에러 시 ?로 대체
+        env=env
     )
     
     # 실시간으로 출력 읽기
@@ -288,56 +293,81 @@ finally:
         return None
 
 def main():
-    """메인 함수"""
-    print("=== 배민 리뷰 수집 시작 ===\n")
+    """메인 함수 - subprocess에서 호출될 때 실행"""
+    import sys
     
-    try:
-        # Supabase에서 배민 매장 목록 가져오기
-        stores = get_baemin_stores()
-        
-        # 복호화 성공한 매장만 필터링
-        valid_stores = [s for s in stores if s.get('platform_pw_decrypted')]
-        
-        print(f"\n총 {len(stores)}개의 배민 매장 중 {len(valid_stores)}개 사용 가능\n")
-        
-        if not valid_stores:
-            print("사용 가능한 매장이 없습니다. 비밀번호 복호화를 확인하세요.")
-            return
-        
-        # 테스트할 매장 선택
-        print("어떤 모드로 실행하시겠습니까?")
-        print("1. 전체 매장 자동 실행 (headless)")
-        print("2. 첫 번째 매장만 브라우저 표시하며 테스트")
-        print("3. 특정 매장 선택하여 테스트")
-        
-        choice = input("\n선택 (1/2/3): ").strip()
-        
-        if choice == "2":
-            # 첫 번째 매장만 테스트
-            store = valid_stores[0]
-            print(f"\n테스트 매장: {store['store_name']}")
+    # subprocess로 호출된 경우
+    if len(sys.argv) > 1:
+        try:
+            # JSON 데이터 파싱
+            crawler_data = json.loads(sys.argv[1])
             
-            result = run_crawler_for_store(store, headless=False, debug=True)
+            # 매장 정보로 크롤링 실행
+            store_info = {
+                'platform_id': crawler_data['platform_id'],
+                'platform_pw': crawler_data['platform_pw'],
+                'platform_code': crawler_data['platform_code'],
+                'store_code': crawler_data['store_code'],
+                'store_name': crawler_data['store_name'],
+                'platform_pw_decrypted': crawler_data['platform_pw'],  # 이미 복호화됨
+                'owner_user_code': 'SYSTEM'  # subprocess 실행시 기본값
+            }
             
-            if result:
-                print(f"\n크롤링 성공: {len(result.get('reviews', []))}개 리뷰 수집")
-                if 'save_stats' in result:
-                    stats = result['save_stats']
-                    print(f"DB 저장 결과: 성공 {stats['saved']}개, 중복 {stats['duplicate']}개, 실패 {stats['failed']}개")
+            # 크롤러 실행
+            result = run_crawler_for_store(store_info, headless=True, debug=False)
+            
+            # 결과 JSON으로 출력
+            if result and 'save_stats' in result:
+                stats = result['save_stats']
+                print(json.dumps({
+                    "success": True,
+                    "collected": len(result.get('reviews', [])),
+                    "saved": stats['saved']
+                }, ensure_ascii=False))
             else:
-                print("\n실패")
+                print(json.dumps({
+                    "success": False,
+                    "error": "크롤링 실패"
+                }, ensure_ascii=False))
                 
-        elif choice == "3":
-            # 매장 목록 표시
-            print("\n=== 매장 목록 ===")
-            for idx, store in enumerate(valid_stores, 1):
-                print(f"{idx}. {store['store_name']} (코드: {store['platform_code']})")
+            sys.exit(0)
             
-            store_idx = int(input("\n테스트할 매장 번호: ")) - 1
+        except Exception as e:
+            print(json.dumps({
+                "success": False,
+                "error": str(e)
+            }, ensure_ascii=False))
+            sys.exit(1)
+    
+    # 기존 대화형 모드
+    else:
+        print("=== 배민 리뷰 수집 시작 ===\n")
+        
+        try:
+            # Supabase에서 배민 매장 목록 가져오기
+            stores = get_baemin_stores()
             
-            if 0 <= store_idx < len(valid_stores):
-                store = valid_stores[store_idx]
-                print(f"\n선택한 매장: {store['store_name']}")
+            # 복호화 성공한 매장만 필터링
+            valid_stores = [s for s in stores if s.get('platform_pw_decrypted')]
+            
+            print(f"\n총 {len(stores)}개의 배민 매장 중 {len(valid_stores)}개 사용 가능\n")
+            
+            if not valid_stores:
+                print("사용 가능한 매장이 없습니다. 비밀번호 복호화를 확인하세요.")
+                return
+            
+            # 테스트할 매장 선택
+            print("어떤 모드로 실행하시겠습니까?")
+            print("1. 전체 매장 자동 실행 (headless)")
+            print("2. 첫 번째 매장만 브라우저 표시하며 테스트")
+            print("3. 특정 매장 선택하여 테스트")
+            
+            choice = input("\n선택 (1/2/3): ").strip()
+            
+            if choice == "2":
+                # 첫 번째 매장만 테스트
+                store = valid_stores[0]
+                print(f"\n테스트 매장: {store['store_name']}")
                 
                 result = run_crawler_for_store(store, headless=False, debug=True)
                 
@@ -349,40 +379,62 @@ def main():
                 else:
                     print("\n실패")
                     
-        else:
-            # 전체 실행
-            total_reviews = 0
-            total_saved = 0
-            successful_stores = 0
-            
-            for idx, store in enumerate(valid_stores, 1):
-                print(f"\n[{idx}/{len(valid_stores)}] {store['store_name']} 처리 중...")
+            elif choice == "3":
+                # 매장 목록 표시
+                print("\n=== 매장 목록 ===")
+                for idx, store in enumerate(valid_stores, 1):
+                    print(f"{idx}. {store['store_name']} (코드: {store['platform_code']})")
                 
-                result = run_crawler_for_store(store, headless=True, debug=False)
+                store_idx = int(input("\n테스트할 매장 번호: ")) - 1
                 
-                if result:
-                    review_count = len(result.get('reviews', []))
-                    print(f"  크롤링 성공: {review_count}개 리뷰 수집")
+                if 0 <= store_idx < len(valid_stores):
+                    store = valid_stores[store_idx]
+                    print(f"\n선택한 매장: {store['store_name']}")
                     
-                    if 'save_stats' in result:
-                        stats = result['save_stats']
-                        print(f"  DB 저장: 성공 {stats['saved']}개, 중복 {stats['duplicate']}개, 실패 {stats['failed']}개")
-                        total_saved += stats['saved']
+                    result = run_crawler_for_store(store, headless=False, debug=True)
                     
-                    total_reviews += review_count
-                    successful_stores += 1
-                else:
-                    print(f"  실패")
-            
-            print("\n=== 수집 완료 ===")
-            print(f"성공: {successful_stores}/{len(valid_stores)} 매장")
-            print(f"총 수집 리뷰: {total_reviews}개")
-            print(f"총 저장 리뷰: {total_saved}개")
-            
-    except Exception as e:
-        print(f"\n예기치 않은 오류: {e}")
-        import traceback
-        traceback.print_exc()
+                    if result:
+                        print(f"\n크롤링 성공: {len(result.get('reviews', []))}개 리뷰 수집")
+                        if 'save_stats' in result:
+                            stats = result['save_stats']
+                            print(f"DB 저장 결과: 성공 {stats['saved']}개, 중복 {stats['duplicate']}개, 실패 {stats['failed']}개")
+                    else:
+                        print("\n실패")
+                        
+            else:
+                # 전체 실행
+                total_reviews = 0
+                total_saved = 0
+                successful_stores = 0
+                
+                for idx, store in enumerate(valid_stores, 1):
+                    print(f"\n[{idx}/{len(valid_stores)}] {store['store_name']} 처리 중...")
+                    
+                    result = run_crawler_for_store(store, headless=True, debug=False)
+                    
+                    if result:
+                        review_count = len(result.get('reviews', []))
+                        print(f"  크롤링 성공: {review_count}개 리뷰 수집")
+                        
+                        if 'save_stats' in result:
+                            stats = result['save_stats']
+                            print(f"  DB 저장: 성공 {stats['saved']}개, 중복 {stats['duplicate']}개, 실패 {stats['failed']}개")
+                            total_saved += stats['saved']
+                        
+                        total_reviews += review_count
+                        successful_stores += 1
+                    else:
+                        print(f"  실패")
+                
+                print("\n=== 수집 완료 ===")
+                print(f"성공: {successful_stores}/{len(valid_stores)} 매장")
+                print(f"총 수집 리뷰: {total_reviews}개")
+                print(f"총 저장 리뷰: {total_saved}개")
+                
+        except Exception as e:
+            print(f"\n예기치 않은 오류: {e}")
+            import traceback
+            traceback.print_exc()
 
 if __name__ == "__main__":
     main()

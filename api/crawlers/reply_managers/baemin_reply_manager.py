@@ -219,8 +219,8 @@ class BaeminReplyManager:
             current_url = self.page.url
             logger.info(f"초기 이동 후 URL: {current_url}")
             
-            # 이미 로그인되어 있는지 확인
-            if ('ceo.baemin.com' in current_url or 'self.baemin.com' in current_url) and 'login' not in current_url:
+            # 이미 로그인되어 있는지 확인 (mypage도 로그인 상태로 간주)
+            if ('ceo.baemin.com' in current_url or 'self.baemin.com' in current_url or 'mypage' in current_url) and 'login' not in current_url:
                 logger.info("이미 로그인되어 있습니다")
                 self.is_logged_in = True
                 return True
@@ -394,7 +394,7 @@ class BaeminReplyManager:
                     final_url = self.page.url
                     logger.info(f"로그인 후 URL: {final_url}")
                     
-                    if ('ceo.baemin.com' in final_url or 'self.baemin.com' in final_url) and 'login' not in final_url:
+                    if ('ceo.baemin.com' in final_url or 'self.baemin.com' in final_url or 'mypage' in final_url) and 'login' not in final_url:
                         logger.info("로그인 성공")
                         self.is_logged_in = True
                         return True
@@ -500,49 +500,40 @@ class BaeminReplyManager:
             logger.error(f"리뷰 페이지 이동 실패: {str(e)}")
             return False
     
-    async def find_review_and_click_reply(self, review_id: str) -> bool:
-        """리뷰를 찾고 답글 버튼을 클릭"""
+    async def find_review_and_click_reply(self, review_id: str, review_info: dict = None):
+        """리뷰를 찾고 답글 버튼을 클릭 - original_id 기반 매칭 + 필드별 매칭"""
         try:
             logger.info(f"리뷰 검색 시작 - Review ID: {review_id}")
             
-            # review_id에서 숫자 부분만 추출
-            numeric_id = review_id.replace('baemin_', '') if 'baemin_' in review_id else review_id
-            logger.info(f"숫자 ID 추출: {numeric_id}")
+            # review_id에서 original_id 추출
+            original_id = review_id.replace('baemin_', '') if 'baemin_' in review_id else review_id
+            logger.info(f"Original ID 추출: {original_id}")
             
-            # 날짜/시간 정보 추출
-            if len(numeric_id) >= 12:
-                year = numeric_id[0:4]
-                month = numeric_id[4:6]
-                day = numeric_id[6:8]
-                hour = numeric_id[8:10] if len(numeric_id) > 8 else "00"
-                minute = numeric_id[10:12] if len(numeric_id) > 10 else "00"
-                
-                date_patterns = [
-                    f"{year}.{month}.{day}",
-                    f"{int(month)}/{int(day)}",
-                    f"{month}/{day}",
-                    f"{year}-{month}-{day}"
-                ]
-                time_patterns = [f"{hour}:{minute}", f"{int(hour)}:{minute}"]
-                
-                logger.info(f"날짜 패턴: {date_patterns}, 시간 패턴: {time_patterns}")
+            # 필드별 매칭을 위한 정보 추출
+            if review_info:
+                review_name = review_info.get('review_name', '')
+                rating = review_info.get('rating', 0)
+                review_content = review_info.get('review_content', '')
+                ordered_menu = review_info.get('ordered_menu', '')
+                logger.info(f"필드별 매칭 정보: name={review_name}, rating={rating}, content={review_content[:30]}..., menu={ordered_menu}")
             
             # 페이지가 로드될 때까지 대기
             await asyncio.sleep(3)
             
-            # 리뷰 찾기 시도
-            max_attempts = 15
+            # 크롤러와 동일한 방식으로 DOM에서 리뷰 찾기
+            max_attempts = 10
             for attempt in range(max_attempts):
                 logger.info(f"리뷰 검색 시도 {attempt + 1}/{max_attempts}")
                 
-                # 다양한 리뷰 카드 셀렉터
+                # 다양한 리뷰 컨테이너 셀렉터 시도
                 review_selectors = [
                     'div[class*="ReviewContent"]',
                     'div[class*="review-content"]',
                     'div[class*="review-item"]',
                     'article[class*="review"]',
                     '.review-card',
-                    '[data-testid*="review"]'
+                    '[data-testid*="review"]',
+                    'div[data-review-id]'  # 크롤러에서 사용하는 데이터 속성
                 ]
                 
                 for selector in review_selectors:
@@ -551,74 +542,46 @@ class BaeminReplyManager:
                         if review_cards:
                             logger.info(f"{len(review_cards)}개의 리뷰 카드 발견 (selector: {selector})")
                             
-                            for i, card in enumerate(review_cards):
-                                try:
-                                    card_text = await card.inner_text()
+                            # 각 리뷰 카드에서 original_id 매칭
+                            for card in review_cards:
+                                # 데이터 속성에서 ID 확인
+                                data_id = await card.get_attribute('data-review-id')
+                                if data_id == original_id:
+                                    logger.info(f"✅ 데이터 속성으로 매칭 성공: {data_id}")
+                                    return await self._click_reply_button(card)
+                                
+                                # 숨겨진 input 필드에서 ID 확인
+                                hidden_inputs = await card.query_selector_all('input[type="hidden"]')
+                                for input_elem in hidden_inputs:
+                                    input_value = await input_elem.get_attribute('value')
+                                    if input_value == original_id:
+                                        logger.info(f"✅ 숨겨진 입력으로 매칭 성공: {input_value}")
+                                        return await self._click_reply_button(card)
+                                
+                                # 텍스트 내용에서 ID 확인 (마지막 수단)
+                                card_text = await card.inner_text()
+                                if original_id in card_text:
+                                    logger.info(f"✅ 텍스트 내용으로 매칭 성공: {original_id}")
+                                    return await self._click_reply_button(card)
+                                
+                                # 필드별 매칭 (review_info가 있을 때만)
+                                if review_info:
+                                    match_score = await self._calculate_match_score(card, review_info)
+                                    if match_score >= 3:  # 매칭 임계값
+                                        logger.info(f"✅ 필드별 매칭 성공: 점수 {match_score}")
+                                        return await self._click_reply_button(card)
                                     
-                                    # 리뷰 매칭 확인
-                                    found = False
-                                    if numeric_id in card_text:
-                                        found = True
-                                        logger.info(f"ID로 리뷰 발견: card #{i}")
-                                    else:
-                                        # 날짜/시간으로 매칭
-                                        for date_pattern in date_patterns:
-                                            if date_pattern in card_text:
-                                                for time_pattern in time_patterns:
-                                                    if time_pattern in card_text:
-                                                        found = True
-                                                        logger.info(f"날짜/시간으로 리뷰 발견: {date_pattern} {time_pattern}")
-                                                        break
-                                                if found:
-                                                    break
-                                    
-                                    if found:
-                                        # 답글 버튼 찾기
-                                        reply_button_selectors = [
-                                            'button:has-text("사장님 댓글 등록")',
-                                            'button:has-text("사장님댓글 등록")',
-                                            'button:has-text("댓글 등록")',
-                                            'button:has-text("답글")',
-                                            'button[class*="reply"]',
-                                            '.reply-button'
-                                        ]
-                                        
-                                        for btn_selector in reply_button_selectors:
-                                            try:
-                                                reply_button = await card.query_selector(btn_selector)
-                                                if reply_button and await reply_button.is_visible():
-                                                    await reply_button.scroll_into_view_if_needed()
-                                                    await asyncio.sleep(0.5)
-                                                    await reply_button.click()
-                                                    logger.info(f"답글 버튼 클릭 성공: {btn_selector}")
-                                                    await asyncio.sleep(2)
-                                                    return True
-                                            except:
-                                                continue
-                                        
-                                        logger.warning("답글 버튼을 찾을 수 없음")
-                                        
-                                except Exception as e:
-                                    logger.debug(f"카드 #{i} 처리 중 오류: {str(e)}")
-                                    continue
-                            
-                            break  # 다음 selector로 넘어가지 않음
-                    except:
+                    except Exception as e:
+                        logger.debug(f"셀렉터 {selector} 처리 중 오류: {str(e)}")
                         continue
                 
-                # 더보기 버튼 클릭 또는 스크롤
+                # 스크롤해서 더 많은 리뷰 로드
                 try:
-                    more_button = await self.page.query_selector('button:has-text("더보기")')
-                    if more_button and await more_button.is_visible():
-                        await more_button.click()
-                        logger.info("더보기 버튼 클릭")
-                        await asyncio.sleep(3)
-                    else:
-                        # 스크롤
-                        await self.page.evaluate('window.scrollBy(0, 500)')
-                        await asyncio.sleep(1)
-                except:
-                    await self.page.evaluate('window.scrollBy(0, 500)')
+                    await self.page.evaluate('window.scrollBy(0, 800)')
+                    await asyncio.sleep(2)
+                    logger.info("페이지 스크롤 완료")
+                except Exception as e:
+                    logger.debug(f"페이지 스크롤 중 오류: {str(e)}")
                     await asyncio.sleep(1)
             
             logger.warning(f"리뷰를 찾을 수 없음: {review_id}")
@@ -646,6 +609,98 @@ class BaeminReplyManager:
             logger.error(f"리뷰 검색 중 오류: {str(e)}")
             return False
     
+    async def _calculate_match_score(self, card, review_info: dict) -> int:
+        """필드별 매칭 점수 계산 (기존 답글 매니저 로직 기반)"""
+        try:
+            score = 0
+            card_text = await card.inner_text()
+            
+            # 1. 리뷰어 이름 매칭 (2점)
+            review_name = review_info.get('review_name', '')
+            if review_name and review_name in card_text:
+                score += 2
+                logger.debug(f"리뷰어 이름 매칭: {review_name}")
+            
+            # 2. 리뷰 내용 매칭 (3점 - 가장 중요)
+            review_content = review_info.get('review_content', '')
+            if review_content and review_content.strip():
+                # 텍스트 정규화해서 비교
+                normalized_content = self._normalize_text(review_content)
+                normalized_card_text = self._normalize_text(card_text)
+                if normalized_content in normalized_card_text:
+                    score += 3
+                    logger.debug(f"리뷰 내용 매칭: {review_content[:30]}...")
+            
+            # 3. 별점 매칭 (1점)
+            rating = review_info.get('rating', 0)
+            if rating > 0:
+                # 별점 이미지나 텍스트 확인
+                try:
+                    star_elements = await card.query_selector_all('svg[class*="star"], img[alt*="별"], .star')
+                    if len(star_elements) == rating:
+                        score += 1
+                        logger.debug(f"별점 매칭: {rating}점")
+                    # 텍스트에서 별점 확인
+                    elif f"{rating}점" in card_text or f"★" * rating in card_text:
+                        score += 1
+                        logger.debug(f"별점 텍스트 매칭: {rating}점")
+                except:
+                    pass
+            
+            # 4. 주문메뉴 매칭 (1점)
+            ordered_menu = review_info.get('ordered_menu', '')
+            if ordered_menu and ordered_menu in card_text:
+                score += 1
+                logger.debug(f"주문메뉴 매칭: {ordered_menu}")
+            
+            logger.debug(f"필드별 매칭 점수: {score}/7")
+            return score
+            
+        except Exception as e:
+            logger.error(f"매칭 점수 계산 중 오류: {str(e)}")
+            return 0
+    
+    def _normalize_text(self, text: str) -> str:
+        """텍스트 정규화 (공백, 줄바꿈 제거)"""
+        if not text:
+            return ""
+        import re
+        return re.sub(r'\s+', '', text.strip())
+    
+    async def _click_reply_button(self, card) -> bool:
+        """답글 버튼 클릭 헬퍼 메서드"""
+        try:
+            # 답글 버튼 찾기
+            reply_button_selectors = [
+                'button:has-text("사장님 댓글 등록")',
+                'button:has-text("사장님댓글 등록")',
+                'button:has-text("댓글 등록")',
+                'button:has-text("답글")',
+                'button[class*="reply"]',
+                '.reply-button'
+            ]
+            
+            for btn_selector in reply_button_selectors:
+                try:
+                    reply_button = await card.query_selector(btn_selector)
+                    if reply_button and await reply_button.is_visible():
+                        await reply_button.scroll_into_view_if_needed()
+                        await asyncio.sleep(0.5)
+                        await reply_button.click()
+                        logger.info(f"답글 버튼 클릭 성공: {btn_selector}")
+                        await asyncio.sleep(2)
+                        return True
+                except Exception as e:
+                    logger.debug(f"답글 버튼 클릭 시도 실패 ({btn_selector}): {str(e)}")
+                    continue
+            
+            logger.warning("답글 버튼을 찾을 수 없음 - 오래된 리뷰로 추정")
+            return "OLD_REVIEW"
+            
+        except Exception as e:
+            logger.error(f"답글 버튼 클릭 중 오류: {str(e)}")
+            return False
+    
     async def write_and_submit_reply(self, reply_text: str) -> bool:
         """답글 작성 및 등록"""
         try:
@@ -653,14 +708,24 @@ class BaeminReplyManager:
             
             await asyncio.sleep(2)
             
-            # textarea 찾기
+            # textarea 찾기 - 사용자가 제공한 정확한 HTML 구조에 맞게 수정
             textarea_selectors = [
-                'textarea',
-                'div[class*="TextArea"] textarea',
-                'textarea[placeholder*="댓글"]',
-                'textarea[placeholder*="답글"]',
-                '.reply-textarea',
-                '#reply-textarea'
+                # 정확한 HTML 구조에 맞는 선택자들
+                'textarea.TextArea_b_b8ew_12i8sxif.c_b149_13c33de8.TextArea_b_b8ew_12i8sxih[rows="3"]',  # 모든 클래스 포함
+                'textarea.TextArea_b_b8ew_12i8sxif[placeholder=""][rows="3"]',  # 핵심 클래스 + 속성
+                'textarea[class*="TextArea_b_b8ew_12i8sxif"][class*="c_b149_13c33de8"][rows="3"]',  # 부분 매칭
+                'textarea[class*="TextArea_b_b8ew_12i8sxif"][placeholder=""][rows="3"]',  # 핵심 클래스 + 빈 placeholder
+                'textarea.TextArea_b_b8ew_12i8sxif[rows="3"]',  # 핵심 클래스 + rows
+                'textarea[placeholder=""][rows="3"]',  # 빈 placeholder + rows
+                # 백업 선택자들
+                'textarea.TextArea_b_b8ew_12i8sxif',  # 핵심 클래스만
+                'textarea[class*="TextArea_b_b8ew_12i8sxif"]',  # 핵심 클래스 부분 매칭
+                'textarea[rows="3"]',  # rows 속성
+                'textarea',  # 일반 textarea
+                # 모달 내부 검색 (백업)
+                'div[role="dialog"] textarea',
+                'div[class*="modal"] textarea',
+                'div[class*="Modal"] textarea'
             ]
             
             textarea = None
@@ -709,14 +774,30 @@ class BaeminReplyManager:
             
             await asyncio.sleep(1)
             
-            # 등록 버튼 찾기
+            # 등록 버튼 찾기 - 사용자가 제공한 정확한 HTML 구조에 맞게 수정
             submit_button_selectors = [
+                # 정확한 HTML 구조 기반 선택자들
+                'button:has(span.Button_b_b8ew_1w1nuchm p.Typography_b_b8ew_1bisyd424:has-text("등록"))',  # 정확한 중첩 구조
+                'button:has(span.Button_b_b8ew_1w1nuchm:has-text("등록"))',  # span 포함 구조
+                'button:has(p.Typography_b_b8ew_1bisyd424:has-text("등록"))',  # p 태그 직접 매칭
+                'button:has(p.c_b149_13c33de7.Typography_b_b8ew_1bisyd424:has-text("등록"))',  # 모든 클래스 포함
+                'button:has(span span p:has-text("등록"))',  # span > span > p 구조
+                # 기존 작동하는 선택자들 (우선순위 높게)
+                'button.Button_b_b8ew_1w1nucha[data-disabled="false"][data-loading="false"]:has-text("등록")',  # 현재 작동하는 선택자
+                'button[class*="Button_b_b8ew_1w1nucha"][data-disabled="false"]:has-text("등록")',  # 부분 매칭
+                'button[data-disabled="false"][data-loading="false"]:has-text("등록")',  # 상태 기반
+                # 백업 선택자들
+                'button[data-atelier-component="Button"]:has(p:has-text("등록"))',  # 정확한 구조
+                'button.Button_b_b8ew_1w1nucha:has(p:has-text("등록"))',  # 정확한 클래스
+                'button[data-disabled="false"]:has(p:has-text("등록"))',  # 활성화된 버튼
                 'button:has-text("등록")',
                 'button[type="button"]:has(p:has-text("등록"))',
                 'button:has-text("작성")',
                 'button:has-text("확인")',
-                'button.submit-button',
-                'button[class*="submit"]'
+                # 모달 내부 등록 버튼 (백업)
+                'div[role="dialog"] button:has-text("등록")',
+                'div[class*="modal"] button:has-text("등록")',
+                'div[class*="Modal"] button:has-text("등록")'
             ]
             
             submit_button = None

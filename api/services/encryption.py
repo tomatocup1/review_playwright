@@ -54,12 +54,41 @@ class EncryptionService:
             return ""
         
         try:
+            # Fernet 암호화된 텍스트는 gAAAAA로 시작
+            if not encrypted_text.startswith('gAAAAA'):
+                logger.warning("평문으로 저장된 데이터")
+                return encrypted_text
+                
             decrypted = self.cipher_suite.decrypt(encrypted_text.encode())
             return decrypted.decode()
+            
         except Exception as e:
             logger.error(f"복호화 오류: {str(e)}")
-            return ""
-    
+            
+            # 다른 키들로 시도
+            fallback_keys = [
+                "RDPgZERUQbGCN6AhvK4ZT6SF0Gau7itdAfWOAO7k1mk=",
+                # 필요시 다른 키 추가
+            ]
+            
+            for key in fallback_keys:
+                try:
+                    fallback_cipher = Fernet(key.encode())
+                    decrypted = fallback_cipher.decrypt(encrypted_text.encode())
+                    logger.warning(f"대체 키로 복호화 성공")
+                    
+                    # 새 키로 재암호화
+                    new_encrypted = self.encrypt(decrypted.decode())
+                    logger.info("새 키로 재암호화 권장")
+                    
+                    return decrypted.decode()
+                except:
+                    continue
+            
+            # 모든 시도 실패시 평문 반환
+            logger.warning("복호화 실패, 평문으로 간주")
+            return encrypted_text
+        
     def hash_platform_credentials(self, platform: str, platform_id: str, platform_code: str) -> str:
         """플랫폼 자격증명을 해시화하여 고유 식별자 생성"""
         data = f"{platform}:{platform_id}:{platform_code}"

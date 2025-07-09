@@ -25,15 +25,30 @@ class AIService:
         
     async def generate_reply(
         self, 
-        review_data: Dict[str, Any], 
-        store_rules: Dict[str, Any],
+        review_data: Dict[str, Any] = None, 
+        store_rules: Dict[str, Any] = None,
         retry_count: int = 0,
-        max_retries: int = 3
+        max_retries: int = 3,
+        *args,  # 위치 인자 지원
+        **kwargs  # 키워드 인자 지원
     ) -> Dict[str, Any]:
         """리뷰에 대한 답글 생성 (매장 정책 반영)"""
         start_time = time.time()
         
         try:
+            # 위치 인자 처리 (기존 웹페이지 호환성)
+            if args:
+                if len(args) >= 1 and review_data is None:
+                    review_data = args[0]
+                if len(args) >= 2 and store_rules is None:
+                    store_rules = args[1]
+            
+            # 키워드 인자 처리
+            if 'review_data' in kwargs and review_data is None:
+                review_data = kwargs['review_data']
+            if 'store_rules' in kwargs and store_rules is None:
+                store_rules = kwargs['store_rules']
+            
             # 파라미터 타입 체크 및 변환
             if not isinstance(review_data, dict):
                 return {
@@ -42,7 +57,14 @@ class AIService:
                     'reply': None,
                     'quality_score': 0.0,
                     'processing_time_ms': 0,
-                    'token_usage': 0
+                    'token_usage': 0,
+                    'model_used': self.model,
+                    'prompt_used': '',
+                    'boss_review_needed': False,
+                    'review_reason': '잘못된 파라미터 타입',
+                    'urgency_score': 0.0,
+                    'retry_count': retry_count,
+                    'total_attempts': retry_count + 1
                 }
             
             if not isinstance(store_rules, dict):
@@ -52,7 +74,14 @@ class AIService:
                     'reply': None,
                     'quality_score': 0.0,
                     'processing_time_ms': 0,
-                    'token_usage': 0
+                    'token_usage': 0,
+                    'model_used': self.model,
+                    'prompt_used': '',
+                    'boss_review_needed': False,
+                    'review_reason': '잘못된 파라미터 타입',
+                    'urgency_score': 0.0,
+                    'retry_count': retry_count,
+                    'total_attempts': retry_count + 1
                 }
             # 답글 생성 가능 여부 확인
             if not self._should_generate_reply(review_data, store_rules):
@@ -62,12 +91,24 @@ class AIService:
                     'reply': None,
                     'quality_score': 0.0,
                     'processing_time_ms': 0,
-                    'token_usage': 0
+                    'token_usage': 0,
+                    'model_used': self.model,
+                    'prompt_used': '',
+                    'boss_review_needed': False,
+                    'review_reason': '별점별 자동 답글 비활성화',
+                    'urgency_score': 0.0,
+                    'retry_count': retry_count,
+                    'total_attempts': retry_count + 1
                 }
             
             # 프롬프트 생성
             prompt = self._create_prompt(review_data, store_rules)
             system_prompt = self._create_system_prompt(store_rules)
+            
+            # 프롬프트 생성 확인 로그
+            logger.info(f"생성된 프롬프트 길이: {len(prompt) if prompt else 0}자")
+            if not prompt:
+                logger.error("프롬프트 생성 실패: 빈 프롬프트")
             
             # 재시도시 temperature 조정
             adjusted_temperature = self.temperature
@@ -191,6 +232,8 @@ class AIService:
                 'quality_score': 0.0,
                 'processing_time_ms': processing_time_ms,
                 'token_usage': 0,
+                'model_used': self.model,
+                'prompt_used': locals().get('prompt', ''),  # 프롬프트가 생성되었다면 포함
                 'boss_review_needed': True,
                 'review_reason': f'AI 답글 생성 오류: {str(e)}',
                 'urgency_score': 0.8,

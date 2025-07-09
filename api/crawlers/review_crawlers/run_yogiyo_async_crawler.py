@@ -6,6 +6,7 @@ import asyncio
 import logging
 import sys
 import os
+import json
 from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -43,12 +44,18 @@ supabase: Client = create_client(
     os.getenv('SUPABASE_ANON_KEY')
 )
 
-async def get_yogiyo_stores():
+async def get_yogiyo_stores(store_code=None):
     """Supabase에서 요기요 매장 목록 가져오기"""
     try:
-        response = supabase.table('platform_reply_rules').select(
+        query = supabase.table('platform_reply_rules').select(
             'store_code, store_name, platform_code, owner_user_code'
-        ).eq('platform', 'yogiyo').eq('is_active', True).execute()
+        ).eq('platform', 'yogiyo').eq('is_active', True)
+        
+        # 특정 매장만 조회
+        if store_code:
+            query = query.eq('store_code', store_code)
+        
+        response = query.execute()
         
         return response.data if response.data else []
     except Exception as e:
@@ -86,9 +93,9 @@ async def save_reviews_to_db(reviews: List[Dict[str, Any]]) -> Dict[str, int]:
                 'delivery_review': review.get('delivery_review', ''),
                 'crawled_at': datetime.now().isoformat(),
                 'is_deleted': False,
-                'boss_reply_needed': False,  # 기본값
+                'boss_reply_needed': False,
                 'review_reason': None,
-                'response_status': 'pending'  # 기본 상태
+                'response_status': 'pending'
             }
             
             # 리뷰 저장
@@ -102,7 +109,6 @@ async def save_reviews_to_db(reviews: List[Dict[str, Any]]) -> Dict[str, int]:
                 
         except Exception as e:
             logger.error(f"리뷰 저장 실패: {str(e)}")
-            # 에러 상세 정보 출력
             if hasattr(e, 'response') and hasattr(e.response, 'json'):
                 try:
                     error_detail = e.response.json()
@@ -147,7 +153,7 @@ async def run_crawler_for_store(store: Dict[str, Any], headless: bool = True, de
         reviews = await crawler.get_reviews_with_pagination(
             platform_code=platform_code,
             store_code=store_code,
-            limit=50  # 최대 50개
+            limit=50
         )
         
         # DB 저장
@@ -170,8 +176,55 @@ async def run_crawler_for_store(store: Dict[str, Any], headless: bool = True, de
         if crawler:
             await crawler.close_browser()
 
+async def run_subprocess_mode(store_code: str):
+    """subprocess 모드로 실행 (자동화용)"""
+    try:
+        # 매장 정보 가져오기
+        stores = await get_yogiyo_stores(store_code)
+        
+        if not stores:
+            result = {"success": False, "error": f"매장을 찾을 수 없음: {store_code}"}
+            print(json.dumps(result))
+            return
+        
+        store = stores[0]
+        
+        # 크롤러 실행
+        result = await run_crawler_for_store(store, headless=True, debug=False)
+        
+        if result and result.get('save_stats'):
+            stats = result['save_stats']
+            output = {
+                "success": True,
+                "collected": len(result.get('reviews', [])),
+                "saved": stats['saved']
+            }
+        else:
+            output = {"success": False, "error": "크롤링 실패"}
+        
+        # JSON 결과 출력 (마지막 줄에)
+        print(json.dumps(output))
+        
+    except Exception as e:
+        output = {"success": False, "error": str(e)}
+        print(json.dumps(output))
+
 async def main():
     """메인 함수"""
+    
+    # subprocess 모드 확인
+    if '--subprocess' in sys.argv:
+        # store-code 파라미터 찾기
+        try:
+            idx = sys.argv.index('--store-code')
+            store_code = sys.argv[idx + 1]
+            await run_subprocess_mode(store_code)
+            return
+        except (ValueError, IndexError):
+            print(json.dumps({"success": False, "error": "store-code 파라미터 없음"}))
+            return
+    
+    # 기존 대화형 모드
     print("=== 요기요 리뷰 수집 시작 ===\n")
     
     try:
@@ -363,6 +416,9 @@ if __name__ == "__main__":
             # 24시간 자동 실행 모드
             print("24시간 자동 실행 모드를 시작합니다...")
             asyncio.run(run_automated())
+        elif sys.argv[1] == '--subprocess':
+            # subprocess 모드 (자동화용)
+            asyncio.run(main())
         else:
             print("알 수 없는 옵션입니다. --help를 사용하세요.")
     else:

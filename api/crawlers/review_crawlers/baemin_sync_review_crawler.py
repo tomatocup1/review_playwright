@@ -286,7 +286,7 @@ class BaeminSyncReviewCrawler(BaeminSyncCrawler):
                 # 미답변 리뷰 API 응답인지 확인 (중요: no-comment가 포함된 URL만)
                 if f"/shops/{platform_code}/reviews" in response.url and response.status == 200:
                     # 미답변 탭의 API인지 확인
-                    if "no-comment" in response.url:
+                    if "no-comment" in response.url or "is_answered=false" in response.url or "/reviews?" in response.url:
                         try:
                             # JSON 응답 파싱
                             data = response.json()

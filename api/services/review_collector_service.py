@@ -9,10 +9,13 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 import sys
 import os
-
+from pathlib import Path  # 추가
+import json              # 추가
+import re
 # 프로젝트 루트 경로를 Python 경로에 추가
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
+from .review_collector_service_sync import SyncReviewCollector
+import threading
 from api.services.supabase_service import SupabaseService
 from api.services.encryption import get_encryption_service
 
@@ -111,174 +114,251 @@ class ReviewCollectorService:
             return None
     
     async def collect_baemin_reviews(self, store_info: dict, start_date: str, end_date: str) -> dict:
-        """배민 리뷰 수집"""
+        """배민 리뷰 수집 - 스레드 방식으로 동기 실행"""
         try:
             logger.info(f"배민 리뷰 수집 시작 - 매장: {store_info['store_name']}")
             
-            # BaeminReviewCrawler 사용 (비동기 버전)
-            from api.crawlers.review_crawlers.baemin_review_crawler import BaeminReviewCrawler
-            
-            # 크롤러 초기화
-            crawler = BaeminReviewCrawler(headless=True)
-            
+            # 암호화된 비밀번호 복호화
             try:
-                # 브라우저 시작
-                await crawler.start_browser()
-                
-                # 로그인
                 decrypted_id = self.encryption.decrypt(store_info['platform_id'])
                 decrypted_pw = self.encryption.decrypt(store_info['platform_pw'])
                 
-                login_success = await crawler.login(decrypted_id, decrypted_pw)
-                if not login_success:
-                    logger.error("배민 로그인 실패")
-                    return {"success": False, "error": "로그인 실패"}
-                
-                # 리뷰 수집
-                reviews = await crawler.get_reviews(
-                    store_id=store_info['platform_code'],
-                    store_code=store_info['store_code']
-                )
-                
-                # 리뷰 저장
-                saved_count = 0
-                for review in reviews:
-                    # 이미 존재하는 리뷰인지 확인
-                    existing = await self.supabase.check_review_exists(review['review_id'])
-                    if not existing:
-                        # 새 리뷰 저장
-                        saved = await self.supabase.insert_review(review)
-                        if saved:
-                            saved_count += 1
-                
-                logger.info(f"배민 리뷰 수집 완료 - 수집: {len(reviews)}개, 저장: {saved_count}개")
-                
-                return {
-                    "success": True,
-                    "collected": len(reviews),
-                    "saved": saved_count
-                }
-                
-            finally:
-                # 브라우저 종료
-                try:
-                    await crawler.close_browser()
-                except AttributeError:
-                    # close 메서드가 없는 경우 처리
-                    pass
+                if not decrypted_id:
+                    decrypted_id = store_info['platform_id']
+                if not decrypted_pw:
+                    decrypted_pw = store_info['platform_pw']
+                    
+            except Exception as e:
+                logger.warning(f"복호화 실패, 평문 사용: {str(e)}")
+                decrypted_id = store_info['platform_id']
+                decrypted_pw = store_info['platform_pw']
+            
+            # ID와 PW가 없으면 스킵
+            if not decrypted_id or not decrypted_pw:
+                logger.warning(f"로그인 정보 없음: {store_info['store_name']}")
+                return {"success": True, "collected": 0, "saved": 0}
+            
+            # 복호화된 정보로 store_info 업데이트
+            store_info_copy = store_info.copy()
+            store_info_copy['platform_id'] = decrypted_id
+            store_info_copy['platform_pw'] = decrypted_pw
+            
+            # 동기 수집기 생성
+            sync_collector = SyncReviewCollector()
+            
+            # 스레드에서 실행
+            thread = threading.Thread(
+                target=sync_collector.run_in_thread,
+                args=(store_info_copy, start_date, end_date)
+            )
+            thread.start()
+            
+            # 스레드 완료 대기 (최대 60초)
+            thread.join(timeout=60)
+            
+            if thread.is_alive():
+                logger.error("리뷰 수집 시간 초과")
+                return {"success": False, "error": "시간 초과"}
+            
+            # 결과 가져오기
+            try:
+                result = sync_collector.result_queue.get_nowait()
+                return result
+            except:
+                logger.error("결과를 가져올 수 없음")
+                return {"success": False, "error": "결과 없음"}
                 
         except Exception as e:
             logger.error(f"배민 리뷰 수집 실패: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return {"success": False, "error": str(e)}
-    
+
     async def collect_coupang_reviews(self, store_info: dict, start_date: str, end_date: str) -> dict:
-        """쿠팡이츠 리뷰 수집"""
+        """쿠팡이츠 리뷰 수집 - 스레드 방식으로 동기 실행"""
         try:
             logger.info(f"쿠팡이츠 리뷰 수집 시작 - 매장: {store_info['store_name']}")
             
-            from api.crawlers.review_crawlers.coupang_async_review_crawler import CoupangAsyncReviewCrawler
-            
-            crawler = CoupangAsyncReviewCrawler(headless=True)
-            
+            # 암호화된 비밀번호 복호화
             try:
-                await crawler.start_browser()
-                
-                # 로그인
                 decrypted_id = self.encryption.decrypt(store_info['platform_id'])
                 decrypted_pw = self.encryption.decrypt(store_info['platform_pw'])
                 
-                login_success = await crawler.login(decrypted_id, decrypted_pw)
-                if not login_success:
-                    return {"success": False, "error": "로그인 실패"}
-                
-                # 리뷰 수집
-                reviews = await crawler.get_reviews(
-                    store_id=store_info['platform_code'],
-                    store_code=store_info['store_code']
-                )
-                
-                # 리뷰 저장
-                saved_count = 0
-                for review in reviews:
-                    existing = await self.supabase.check_review_exists(review['review_id'])
-                    if not existing:
-                        saved = await self.supabase.insert_review(review)
-                        if saved:
-                            saved_count += 1
-                
-                return {
-                    "success": True,
-                    "collected": len(reviews),
-                    "saved": saved_count
-                }
-                
-            finally:
-                try:
-                    await crawler.close_browser()
-                except AttributeError:
-                    # close 메서드가 없는 경우 처리
-                    pass
+                if not decrypted_id:
+                    decrypted_id = store_info['platform_id']
+                if not decrypted_pw:
+                    decrypted_pw = store_info['platform_pw']
+                    
+            except Exception as e:
+                logger.warning(f"복호화 실패, 평문 사용: {str(e)}")
+                decrypted_id = store_info['platform_id']
+                decrypted_pw = store_info['platform_pw']
+            
+            # ID와 PW가 없으면 스킵
+            if not decrypted_id or not decrypted_pw:
+                logger.warning(f"로그인 정보 없음: {store_info['store_name']}")
+                return {"success": True, "collected": 0, "saved": 0}
+            
+            # 복호화된 정보로 store_info 업데이트
+            store_info_copy = store_info.copy()
+            store_info_copy['platform_id'] = decrypted_id
+            store_info_copy['platform_pw'] = decrypted_pw
+            
+            # 동기 수집기에서 쿠팡 크롤러 사용
+            from .review_collector_service_sync import SyncReviewCollector
+            sync_collector = SyncReviewCollector()
+            
+            # 스레드에서 실행
+            thread = threading.Thread(
+                target=sync_collector.run_coupang_in_thread,
+                args=(store_info_copy, start_date, end_date)
+            )
+            thread.start()
+            
+            # 스레드 완료 대기 (최대 60초)
+            thread.join(timeout=60)
+            
+            if thread.is_alive():
+                logger.error("쿠팡 리뷰 수집 시간 초과")
+                return {"success": False, "error": "시간 초과"}
+            
+            # 결과 가져오기
+            try:
+                result = sync_collector.result_queue.get_nowait()
+                return result
+            except:
+                logger.error("결과를 가져올 수 없음")
+                return {"success": False, "error": "결과 없음"}
                 
         except Exception as e:
             logger.error(f"쿠팡이츠 리뷰 수집 실패: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return {"success": False, "error": str(e)}
-    
+
     async def collect_yogiyo_reviews(self, store_info: dict, start_date: str, end_date: str) -> dict:
-        """요기요 리뷰 수집"""
+        """요기요 리뷰 수집 - 스레드 방식으로 동기 실행"""
         try:
             logger.info(f"요기요 리뷰 수집 시작 - 매장: {store_info['store_name']}")
             
-            from api.crawlers.review_crawlers.yogiyo_async_review_crawler import YogiyoAsyncReviewCrawler
-            
-            crawler = YogiyoAsyncReviewCrawler(headless=True)
-            
+            # 암호화된 비밀번호 복호화
             try:
-                await crawler.start_browser()
-                
-                # 로그인
                 decrypted_id = self.encryption.decrypt(store_info['platform_id'])
                 decrypted_pw = self.encryption.decrypt(store_info['platform_pw'])
                 
-                login_success = await crawler.login(decrypted_id, decrypted_pw)
-                if not login_success:
-                    return {"success": False, "error": "로그인 실패"}
-                
-                # 리뷰 수집
-                reviews = await crawler.get_reviews(
-                    store_id=store_info['platform_code'],
-                    store_code=store_info['store_code']
-                )
-                
-                # 리뷰 저장
-                saved_count = 0
-                for review in reviews:
-                    existing = await self.supabase.check_review_exists(review['review_id'])
-                    if not existing:
-                        saved = await self.supabase.insert_review(review)
-                        if saved:
-                            saved_count += 1
-                
-                return {
-                    "success": True,
-                    "collected": len(reviews),
-                    "saved": saved_count
-                }
-                
-            finally:
-                try:
-                    await crawler.close_browser()
-                except AttributeError:
-                    # close 메서드가 없는 경우 처리
-                    pass
+                if not decrypted_id:
+                    decrypted_id = store_info['platform_id']
+                if not decrypted_pw:
+                    decrypted_pw = store_info['platform_pw']
+                    
+            except Exception as e:
+                logger.warning(f"복호화 실패, 평문 사용: {str(e)}")
+                decrypted_id = store_info['platform_id']
+                decrypted_pw = store_info['platform_pw']
+            
+            # ID와 PW가 없으면 스킵
+            if not decrypted_id or not decrypted_pw:
+                logger.warning(f"로그인 정보 없음: {store_info['store_name']}")
+                return {"success": True, "collected": 0, "saved": 0}
+            
+            # 복호화된 정보로 store_info 업데이트
+            store_info_copy = store_info.copy()
+            store_info_copy['platform_id'] = decrypted_id
+            store_info_copy['platform_pw'] = decrypted_pw
+            
+            # 동기 수집기에서 요기요 크롤러 사용
+            from .review_collector_service_sync import SyncReviewCollector
+            sync_collector = SyncReviewCollector()
+            
+            # 스레드에서 실행
+            thread = threading.Thread(
+                target=sync_collector.run_yogiyo_in_thread,
+                args=(store_info_copy, start_date, end_date)
+            )
+            thread.start()
+            
+            # 스레드 완료 대기 (최대 60초)
+            thread.join(timeout=60)
+            
+            if thread.is_alive():
+                logger.error("요기요 리뷰 수집 시간 초과")
+                return {"success": False, "error": "시간 초과"}
+            
+            # 결과 가져오기
+            try:
+                result = sync_collector.result_queue.get_nowait()
+                return result
+            except:
+                logger.error("결과를 가져올 수 없음")
+                return {"success": False, "error": "결과 없음"}
                 
         except Exception as e:
             logger.error(f"요기요 리뷰 수집 실패: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return {"success": False, "error": str(e)}
-    
+        
     async def collect_naver_reviews(self, store_info: dict, start_date: str, end_date: str) -> dict:
-        """네이버 리뷰 수집"""
-        logger.info(f"네이버 리뷰 수집은 아직 구현되지 않았습니다 - 매장: {store_info['store_name']}")
-        return {"success": True, "collected": 0, "saved": 0}
+        """네이버 리뷰 수집 - 스레드 방식으로 동기 실행"""
+        try:
+            logger.info(f"네이버 리뷰 수집 시작 - 매장: {store_info['store_name']}")
+            
+            # 암호화된 비밀번호 복호화
+            try:
+                decrypted_id = self.encryption.decrypt(store_info['platform_id'])
+                decrypted_pw = self.encryption.decrypt(store_info['platform_pw'])
+                
+                if not decrypted_id:
+                    decrypted_id = store_info['platform_id']
+                if not decrypted_pw:
+                    decrypted_pw = store_info['platform_pw']
+                    
+            except Exception as e:
+                logger.warning(f"복호화 실패, 평문 사용: {str(e)}")
+                decrypted_id = store_info['platform_id']
+                decrypted_pw = store_info['platform_pw']
+            
+            # ID와 PW가 없으면 스킵
+            if not decrypted_id or not decrypted_pw:
+                logger.warning(f"로그인 정보 없음: {store_info['store_name']}")
+                return {"success": True, "collected": 0, "saved": 0}
+            
+            # 복호화된 정보로 store_info 업데이트
+            store_info_copy = store_info.copy()
+            store_info_copy['platform_id'] = decrypted_id
+            store_info_copy['platform_pw'] = decrypted_pw
+            
+            # 동기 수집기에서 네이버 크롤러 사용
+            from .review_collector_service_sync import SyncReviewCollector
+            sync_collector = SyncReviewCollector()
+            
+            # 스레드에서 실행
+            thread = threading.Thread(
+                target=sync_collector.run_naver_in_thread,
+                args=(store_info_copy, start_date, end_date)
+            )
+            thread.start()
+            
+            # 스레드 완료 대기 (최대 60초)
+            thread.join(timeout=60)
+            
+            if thread.is_alive():
+                logger.error("네이버 리뷰 수집 시간 초과")
+                return {"success": False, "error": "시간 초과"}
+            
+            # 결과 가져오기
+            try:
+                result = sync_collector.result_queue.get_nowait()
+                return result
+            except:
+                logger.error("결과를 가져올 수 없음")
+                return {"success": False, "error": "결과 없음"}
+                
+        except Exception as e:
+            logger.error(f"네이버 리뷰 수집 실패: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {"success": False, "error": str(e)}
     
     async def collect_all_stores_reviews(self) -> Dict[str, Any]:
         """모든 활성 매장의 리뷰를 병렬로 수집"""
@@ -294,8 +374,8 @@ class ReviewCollectorService:
             
             logger.info(f"총 {len(active_stores)}개 매장 리뷰 수집 시작")
             
-            # 동시 실행 제한 (10개)
-            semaphore = asyncio.Semaphore(10)
+            # 동시 실행 제한 (3개로 줄임 - 브라우저 리소스 고려)
+            semaphore = asyncio.Semaphore(3)
             
             async def collect_with_limit(store):
                 """세마포어로 동시 실행 제한"""

@@ -5,6 +5,7 @@ Supabase 연동 및 리뷰 수집
 import asyncio
 import sys
 import os
+import json
 from typing import Dict, List
 from dotenv import load_dotenv
 from datetime import datetime
@@ -30,17 +31,22 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_coupang_stores():
-    """Supabase에서 모든 쿠팡이츠 매장 정보 가져오기"""
+def get_coupang_stores(store_code=None):
+    """Supabase에서 쿠팡이츠 매장 정보 가져오기"""
     logger.info("[DB] Supabase에서 쿠팡이츠 매장 정보 조회 중...")
     supabase = get_supabase_client()
     
-    # 쿠팡이츠 매장만 조회
-    response = supabase.table('platform_reply_rules')\
+    # 쿼리 빌드
+    query = supabase.table('platform_reply_rules')\
         .select('*')\
         .eq('platform', 'coupang')\
-        .eq('is_active', True)\
-        .execute()
+        .eq('is_active', True)
+    
+    # 특정 매장만 조회
+    if store_code:
+        query = query.eq('store_code', store_code)
+    
+    response = query.execute()
     
     logger.info(f"[DB] {len(response.data)}개의 쿠팡이츠 매장 발견")
     
@@ -214,8 +220,56 @@ async def run_crawler_for_store(store_info: Dict, headless: bool = True):
         await crawler.close_browser()
 
 
+async def run_subprocess_mode(store_code: str):
+    """subprocess 모드로 실행 (자동화용)"""
+    try:
+        # 매장 정보 가져오기
+        stores = get_coupang_stores(store_code)
+        
+        if not stores:
+            result = {"success": False, "error": f"매장을 찾을 수 없음: {store_code}"}
+            print(json.dumps(result))
+            return
+        
+        store = stores[0]
+        
+        # 크롤러 실행
+        result = await run_crawler_for_store(store, headless=True)
+        
+        if result and result.get('save_stats'):
+            stats = result['save_stats']
+            output = {
+                "success": True,
+                "collected": len(result.get('reviews', [])),
+                "saved": stats['saved']
+            }
+        else:
+            output = {"success": False, "error": "크롤링 실패"}
+        
+        # JSON 결과 출력 (마지막 줄에)
+        print(json.dumps(output))
+        
+    except Exception as e:
+        output = {"success": False, "error": str(e)}
+        print(json.dumps(output))
+
+
 async def main():
     """메인 함수"""
+    
+    # subprocess 모드 확인
+    if '--subprocess' in sys.argv:
+        # store-code 파라미터 찾기
+        try:
+            idx = sys.argv.index('--store-code')
+            store_code = sys.argv[idx + 1]
+            await run_subprocess_mode(store_code)
+            return
+        except (ValueError, IndexError):
+            print(json.dumps({"success": False, "error": "store-code 파라미터 없음"}))
+            return
+    
+    # 기존 대화형 모드
     print("=== 쿠팡이츠 리뷰 수집 시작 ===\n")
     
     try:

@@ -6,7 +6,7 @@ import sys
 import asyncio
 import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,12 +27,17 @@ from api.services.review_collector_service import ReviewCollectorService
 from api.services.reply_posting_service import ReplyPostingService
 from api.services.ai_service import AIService
 from api.services.supabase_service import SupabaseService, get_supabase_service
+from api.services.encryption import decrypt_password
 from config.openai_client import get_openai_client
 
-# Windows에서 asyncio subprocess 문제 해결
+# Windows에서 Playwright 호환성을 위해 SelectorEventLoopPolicy 사용
+# nest_asyncio 적용 전에 설정해야 함
 if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    # Playwright async API를 위한 필수 설정
+    from asyncio import WindowsSelectorEventLoopPolicy
+    asyncio.set_event_loop_policy(WindowsSelectorEventLoopPolicy())
 
+# nest_asyncio는 이벤트루프 정책 설정 후에 적용
 nest_asyncio.apply()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -59,8 +64,17 @@ scheduler = AsyncIOScheduler()
 async def lifespan(app: FastAPI):
     logger.info("리뷰 자동화 서비스 시작...")
     
-    # 24시간 자동화 스케줄러 시작
-    await startup_scheduler()
+    # ⭐ 조건부 실행 로직 추가
+    enable_auto_start = os.getenv("AUTO_START_JOBS", "false").lower() == "true"
+    
+    if enable_auto_start:
+        logger.info("🚀 자동화 모드: 즉시 실행 + 스케줄러 시작")
+        # 기존 코드 그대로 - 즉시 실행 포함
+        await startup_scheduler()
+    else:
+        logger.info("🌐 웹서버 모드: 스케줄러만 등록 (즉시 실행 없음)")
+        # 스케줄러만 등록, 즉시 실행 안함
+        await setup_scheduler_only()
     
     yield
     
@@ -198,6 +212,56 @@ async def startup_scheduler():
         logger.error(f"스케줄러 시작 실패: {str(e)}")
         logger.error(traceback.format_exc())
 
+async def setup_scheduler_only():
+    """스케줄러만 등록, 즉시 실행 안함 - 웹서버 모드용"""
+    try:
+        # 서비스 인스턴스 준비 (기존과 동일)
+        supabase_service = get_supabase_service()
+        review_service = ReviewCollectorService(supabase_service)
+        reply_service = ReplyPostingService(supabase_service)
+        ai_service = AIService()
+        
+        logger.info("=== 스케줄러만 등록 시작 (즉시 실행 없음) ===")
+        
+        # 1. 리뷰 수집 작업 - 4시간마다 (운영 환경)
+        scheduler.add_job(
+            collect_all_reviews_job,
+            CronTrigger(hour="*/4"),  # 4시간마다
+            args=[review_service],
+            id="review_collection",
+            name="리뷰 수집 작업",
+            replace_existing=True
+        )
+        
+        # 2. AI 답글 생성 작업 - 30분마다
+        scheduler.add_job(
+            generate_ai_replies_job,
+            CronTrigger(minute="*/30"),  # 30분마다
+            args=[ai_service, supabase_service],
+            id="ai_reply_generation",
+            name="AI 답글 생성 작업",
+            replace_existing=True
+        )
+        
+        # 3. 답글 등록 작업 - 4시간마다 (1일/2일 지연 로직 포함)
+        scheduler.add_job(
+            post_replies_batch_job,
+            CronTrigger(hour="*/4"),  # 4시간마다
+            args=[reply_service],
+            id="reply_posting",
+            name="답글 등록 작업 (1일/2일 지연)",
+            replace_existing=True
+        )
+        
+        scheduler.start()
+        logger.info("=== 스케줄러 등록 완료 (웹서버 모드) ===")
+        logger.info("운영 모드: 리뷰 수집(4시간), AI 생성(30분), 답글 등록(4시간) 간격")
+        logger.info("답글 지연: 일반 1일, 사장님확인 2일")
+        
+    except Exception as e:
+        logger.error(f"스케줄러 등록 실패: {str(e)}")
+        logger.error(traceback.format_exc())
+
 # 리뷰 수집 작업
 async def collect_all_reviews_job(review_service: ReviewCollectorService):
     """모든 활성 매장의 리뷰를 수집하는 스케줄 작업"""
@@ -246,10 +310,57 @@ async def generate_ai_replies_job(ai_service: AIService, supabase_service: Supab
                     
                     # DB에 저장
                     if reply_result['success']:
+                        # 답글 저장 및 상태 업데이트 (수동 시스템과 동일)
                         await supabase_service.save_ai_reply(
                             review['review_id'],
                             reply_result['reply'],
-                            'ai_generated'
+                            reply_result.get('quality_score', 0.8)
+                        )
+                        
+                        # 생성 이력 저장 (수동 시스템과 동일)
+                        await supabase_service.save_reply_generation_history(
+                            review_id=review['review_id'],
+                            user_code='SYSTEM',  # 자동화 시스템
+                            generation_type='ai_auto',  # 자동 생성
+                            prompt_used=reply_result.get('prompt_used', ''),
+                            model_version=reply_result.get('model_used', 'gpt-4o-mini'),
+                            generated_content=reply_result['reply'],
+                            quality_score=reply_result['quality_score'],
+                            processing_time_ms=reply_result.get('processing_time_ms', 0),
+                            token_usage=reply_result.get('token_usage', 0),
+                            is_selected=True  # 자동화에서는 바로 선택됨
+                        )
+                        
+                        # boss_review_needed, review_reason, urgency_score 처리
+                        boss_review_needed = reply_result.get('boss_review_needed', False)
+                        review_reason = reply_result.get('review_reason', '')
+                        urgency_score = reply_result.get('urgency_score', 0.3)
+                        quality_score = reply_result.get('quality_score', 0.8)
+                        rating = review.get('rating', 5)
+                        
+                        # 자동 등록 여부 결정 (스마트 자동화)
+                        auto_post_status = 'generated'  # 기본값: 수동 검토 필요
+                        
+                        # 높은 별점 + 높은 품질 + 사장님 검토 불필요 → 자동 등록 대기
+                        if (rating >= 4 and 
+                            quality_score >= 0.7 and 
+                            not boss_review_needed and
+                            urgency_score < 0.5):
+                            auto_post_status = 'ready_to_post'  # 자동 등록 대기
+                            logger.info(f"리뷰 {review['review_id']} 자동 등록 대기 상태로 설정 (별점: {rating}, 품질: {quality_score:.2f})")
+                        else:
+                            logger.info(f"리뷰 {review['review_id']} 수동 검토 필요 (별점: {rating}, 품질: {quality_score:.2f}, 사장님검토: {boss_review_needed})")
+                        
+                        # 상태 업데이트 (수동 시스템과 동일한 방식)
+                        await supabase_service.update_review_status(
+                            review_id=review['review_id'],
+                            status=auto_post_status,
+                            reply_content=reply_result['reply'],
+                            reply_type='ai_auto',
+                            reply_by='AI_AUTO',
+                            boss_review_needed=boss_review_needed,  # 파라미터명은 그대로 유지 (메서드에서 boss_reply_needed로 변환)
+                            review_reason=review_reason,
+                            urgency_score=urgency_score
                         )
                     else:
                         # 답글 생성 실패시 로그 기록
@@ -329,48 +440,157 @@ async def generate_single_reply(ai_service: AIService, supabase_service: Supabas
         raise
 
 async def post_replies_batch_job(reply_service: ReplyPostingService):
-    """생성된 AI 답글을 일괄 등록"""
+    """생성된 AI 답글을 일괄 등록 - 1일/2일 지연 로직 적용"""
     try:
         logger.info("=== 답글 일괄 등록 시작 ===")
         
-        # 등록 대기 중인 답글 조회
         supabase = reply_service.supabase
+        now = datetime.now()
+        one_day_ago = now - timedelta(days=1)
+        two_days_ago = now - timedelta(days=2)
         
-        # generated 상태의 리뷰 조회
-        response = await supabase.client.table('reviews')\
-            .select('*')\
-            .eq('response_status', 'generated')\
-            .limit(10)\
-            .execute()
+        # 1. 일반 답글: 1일 지난 것만 (사장님 확인 불필요)
+        # 30일 이내 리뷰만 선택 (배민 등의 답글 등록 제한 고려)
+        thirty_days_ago = now - timedelta(days=30)
         
-        if not response.data:
-            logger.info("등록할 답글이 없습니다")
+        logger.info(f"지연 조건 확인: 현재시간={now.strftime('%Y-%m-%d %H:%M')}, 1일전={one_day_ago.date()}, 2일전={two_days_ago.date()}")
+        
+        normal_replies = await supabase._execute_query(
+            supabase.client.table('reviews')
+            .select('*')
+            .in_('response_status', ['ready_to_post', 'generated'])
+            .or_('boss_reply_needed.is.null,boss_reply_needed.eq.false')  # null이거나 false
+            .lte('review_date', one_day_ago.date().isoformat())  # 1일 이전 (lte로 변경)
+            .gte('review_date', thirty_days_ago.date().isoformat())  # 30일 이내만 (gte로 변경)
+            .order('review_date', desc=False)
+            .limit(15)
+        )
+        
+        # 2. 사장님 확인 필요: 2일 지난 것만 (30일 이내)
+        boss_review_replies = await supabase._execute_query(
+            supabase.client.table('reviews')
+            .select('*')
+            .in_('response_status', ['ready_to_post', 'generated'])
+            .eq('boss_reply_needed', True)  # 사장님 확인 필요
+            .lte('review_date', two_days_ago.date().isoformat())  # 2일 이전 (lte로 변경)
+            .gte('review_date', thirty_days_ago.date().isoformat())  # 30일 이내만 (gte로 변경)
+            .order('review_date', desc=False)
+            .limit(5)
+        )
+        
+        # 두 그룹 합치기
+        all_reviews = []
+        if normal_replies.data:
+            all_reviews.extend(normal_replies.data)
+        if boss_review_replies.data:
+            all_reviews.extend(boss_review_replies.data)
+        
+        if not all_reviews:
+            logger.info("등록할 답글이 없습니다 (1일/2일 지연 조건 미충족)")
             return
         
-        reviews = response.data
-        logger.info(f"{len(reviews)}개의 답글 등록 시작")
+        logger.info(f"답글 등록 대상: 일반 {len(normal_replies.data if normal_replies.data else [])}개, "
+                   f"사장님확인 {len(boss_review_replies.data if boss_review_replies.data else [])}개")
         
+        # 플랫폼별 그룹핑으로 효율적 처리
         success_count = 0
         fail_count = 0
         
-        for review in reviews:
+        # 매장 정보 한 번만 조회 (platform_reply_rules에서)
+        try:
+            # platform_reply_rules 테이블에서 직접 조회
+            stores_query = supabase.client.table('platform_reply_rules').select('*').eq('is_active', True)
+            stores_response = await supabase._execute_query(stores_query)
+            
+            if not stores_response.data:
+                logger.warning("활성화된 매장이 없습니다")
+                return
+            
+            store_map = {store['store_code']: store for store in stores_response.data}
+            logger.info(f"매장 정보 조회 성공: {len(store_map)}개 매장")
+            
+        except Exception as e:
+            logger.error(f"매장 정보 조회 실패: {str(e)}")
+            return
+        
+        # 플랫폼별로 그룹핑
+        platform_groups = {}
+        for review in all_reviews:
+            platform = review.get('platform')
+            platform_code = review.get('platform_code')
+            store_code = review.get('store_code')
+            
+            if not all([platform, platform_code, store_code]):
+                logger.error(f"필수 정보 누락: {review['review_id']}")
+                fail_count += 1
+                continue
+                
+            # 매장 정보 확인
+            store_info = store_map.get(store_code)
+            if not store_info:
+                logger.error(f"매장 정보 없음: {store_code}")
+                fail_count += 1
+                continue
+            
+            # 플랫폼+계정별로 그룹핑 (매장 정보 포함)
+            group_key = f"{platform}_{platform_code}"
+            if group_key not in platform_groups:
+                # 비밀번호 복호화
+                encrypted_pw = store_info.get('platform_pw', '')
+                decrypted_pw = decrypt_password(encrypted_pw) if encrypted_pw else ''
+                
+                # 복호화된 매장 정보 생성
+                decrypted_store_info = store_info.copy()
+                decrypted_store_info['platform_pw'] = decrypted_pw
+                
+                platform_groups[group_key] = {
+                    'platform': platform,
+                    'platform_code': platform_code,
+                    'store_info': decrypted_store_info,  # 복호화된 매장 정보 포함
+                    'platform_id': store_info.get('platform_id'),
+                    'platform_pw': decrypted_pw,  # 복호화된 비밀번호
+                    'store_name': store_info.get('store_name'),
+                    'user_code': store_info.get('owner_user_code'),  # 올바른 필드명
+                    'reviews': []
+                }
+                
+                logger.info(f"비밀번호 복호화 완료: {platform_code} (암호화: {len(encrypted_pw)}자 -> 복호화: {len(decrypted_pw)}자)")
+            platform_groups[group_key]['reviews'].append(review)
+        
+        logger.info(f"플랫폼별 그룹핑 완료: {len(platform_groups)}개 그룹")
+        
+        # 각 플랫폼별로 일괄 처리
+        for group_key, group_data in platform_groups.items():
             try:
-                # 답글 등록 시도
-                result = await reply_service.post_single_reply(
-                    review['review_id'],
-                    review.get('final_response') or review.get('ai_response', '')
+                platform = group_data['platform']
+                platform_code = group_data['platform_code']
+                user_code = group_data['user_code']
+                reviews = group_data['reviews']
+                
+                logger.info(f"=== {platform} ({platform_code}) 일괄 처리 시작: {len(reviews)}개 리뷰 ===")
+                
+                # 플랫폼별 일괄 처리 (매장 정보 포함)
+                result = await reply_service.post_batch_replies_by_platform(
+                    platform=platform,
+                    platform_code=platform_code,
+                    user_code=user_code,
+                    reviews=reviews,
+                    store_info=group_data['store_info']  # 매장 정보 직접 전달
                 )
                 
-                if result.get('success'):
-                    success_count += 1
-                else:
-                    fail_count += 1
-                    
+                batch_success = result.get('success_count', 0)
+                batch_fail = result.get('fail_count', 0)
+                
+                success_count += batch_success
+                fail_count += batch_fail
+                
+                logger.info(f"{platform} ({platform_code}) 완료: {batch_success}개 성공, {batch_fail}개 실패")
+                
             except Exception as e:
-                logger.error(f"답글 등록 실패 - review_id: {review['review_id']}, error: {str(e)}")
-                fail_count += 1
+                logger.error(f"플랫폼 일괄 처리 실패 - {group_key}: {str(e)}")
+                fail_count += len(group_data['reviews'])
         
-        logger.info(f"답글 일괄 등록 완료: {success_count}개 성공, {fail_count}개 실패")
+        logger.info(f"전체 답글 일괄 등록 완료: {success_count}개 성공, {fail_count}개 실패")
             
     except Exception as e:
         logger.error(f"답글 일괄 등록 작업 실패: {str(e)}")

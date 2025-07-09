@@ -3,7 +3,7 @@ Windows 환경을 위한 비동기 크롤러 래퍼
 asyncio 이벤트 루프 문제를 해결하기 위한 특별한 처리
 """
 import sys
-import asyncio
+import asyncio, sys
 import logging
 from typing import Dict, List, Any, Optional
 from pathlib import Path
@@ -13,13 +13,8 @@ from abc import ABC, abstractmethod
 
 # Windows에서 asyncio 이벤트 루프 정책 설정
 if sys.platform == 'win32':
-    # ProactorEventLoop는 subprocess를 지원하지만 signal handling에 문제가 있을 수 있음
-    try:
-        # 이미 설정된 정책이 있는지 확인
-        asyncio.get_event_loop_policy()
-    except:
-        # 설정되지 않은 경우에만 설정
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    # ProactorEventLoop를 사용하여 subprocess 문제 해결
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 logger = logging.getLogger(__name__)
 
@@ -39,47 +34,75 @@ class WindowsAsyncBaseCrawler(ABC):
         self.screenshot_dir = Path(f"C:/Review_playwright/logs/screenshots/{self.platform_name}")
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
         
-    async def start_browser(self):
-        """브라우저 시작"""
-        try:
-            logger.info(f"Starting {self.platform_name} browser in async mode (Windows)...")
-            
-            self.playwright = await async_playwright().start()
-            
-            # 브라우저 실행 옵션
-            launch_options = {
-                'headless': self.headless,
-                'args': [
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-gpu',
-                    '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process'
-                ]
-            }
-            
-            # 브라우저 시작
-            self.browser = await self.playwright.chromium.launch(**launch_options)
-            
-            # 컨텍스트 생성
-            self.context = await self.browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport={'width': 1920, 'height': 1080},
-                ignore_https_errors=True
-            )
-            
-            # 페이지 생성
-            self.page = await self.context.new_page()
-            self.page.set_default_timeout(30000)
-            
-            logger.info(f"{self.platform_name} browser started successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to start browser: {str(e)}")
-            await self.close_browser()
-            raise
+    async def start_browser(self, max_retries: int = 3):
+        """브라우저 시작 (재시도 로직 포함)"""
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Starting {self.platform_name} browser in async mode (Windows)... (attempt {attempt + 1}/{max_retries})")
+                
+                # 이전 시도의 리소스 정리
+                if attempt > 0:
+                    await self.close_browser()
+                    await asyncio.sleep(2)  # 잠시 대기
+                
+                self.playwright = await asyncio.wait_for(
+                    async_playwright().start(), 
+                    timeout=30.0
+                )
+                
+                # 브라우저 실행 옵션
+                launch_options = {
+                    'headless': self.headless,
+                    'timeout': 60000,  # 60초 타임아웃
+                    'args': [
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-gpu',
+                        '--disable-web-security',
+                        '--disable-features=IsolateOrigins,site-per-process',
+                        '--single-process',  # 단일 프로세스 모드
+                        '--disable-background-timer-throttling',
+                        '--disable-backgrounding-occluded-windows',
+                        '--disable-renderer-backgrounding'
+                    ]
+                }
+                
+                # 브라우저 시작
+                self.browser = await asyncio.wait_for(
+                    self.playwright.chromium.launch(**launch_options),
+                    timeout=60.0
+                )
+                
+                # 컨텍스트 생성
+                self.context = await self.browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    viewport={'width': 1920, 'height': 1080},
+                    ignore_https_errors=True
+                )
+                
+                # 페이지 생성
+                self.page = await self.context.new_page()
+                self.page.set_default_timeout(30000)
+                
+                logger.info(f"{self.platform_name} browser started successfully")
+                return  # 성공시 반환
+                
+            except asyncio.TimeoutError:
+                logger.warning(f"Browser start timeout (attempt {attempt + 1}/{max_retries})")
+                await self.close_browser()
+                if attempt == max_retries - 1:
+                    raise Exception("브라우저 시작 타임아웃")
+                    
+            except Exception as e:
+                logger.error(f"Failed to start browser (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                await self.close_browser()
+                if attempt == max_retries - 1:
+                    raise Exception(f"브라우저 시작 실패: {str(e)}")
+                    
+                # 다음 시도 전 잠시 대기
+                await asyncio.sleep(3)
             
     async def close_browser(self):
         """브라우저 종료"""

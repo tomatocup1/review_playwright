@@ -174,21 +174,202 @@ class CoupangReplyManager:
             # 날짜 설정 (1개월) - 수정된 로직
             await self.set_date_range(page)
             
-            # 미답변 탭 클릭
-            await page.click('div:has-text("미답변").css-jzkpn6.e1kgpv5e2')
-            await page.wait_for_timeout(3000)
+            # 미답변 탭 클릭 - 더 확실한 방법
+            try:
+                # 현재 URL과 페이지 정보 확인
+                current_url = page.url
+                logger.info(f"🌐 현재 URL: {current_url}")
+                
+                # 현재 날짜 범위 확인
+                try:
+                    date_display = await page.query_selector('div.css-1rkgd7l')
+                    if date_display:
+                        date_text = await date_display.text_content()
+                        logger.info(f"📅 현재 날짜 범위: {date_text}")
+                    else:
+                        logger.warning("날짜 범위 정보를 찾을 수 없음")
+                except Exception as e:
+                    logger.warning(f"날짜 범위 확인 실패: {str(e)}")
+                
+                # 모든 탭 확인
+                all_tabs = await page.query_selector_all('[role="tab"]')
+                logger.info(f"🔍 페이지의 모든 탭:")
+                for i, tab in enumerate(all_tabs):
+                    try:
+                        tab_text = await tab.text_content()
+                        is_selected = await tab.get_attribute('aria-selected')
+                        logger.info(f"   탭 {i+1}: '{tab_text}' (선택됨: {is_selected})")
+                    except:
+                        pass
+                
+                # 미답변 탭 찾기 - 실제 HTML 구조에 맞게 수정
+                tab_clicked = False
+                
+                # 방법 1: 정확한 구조로 미답변 탭 찾기
+                try:
+                    # div.css-jzkpn6 안의 span:has-text("미답변") 찾기
+                    unanswered_tab = await page.query_selector('div.css-jzkpn6:has(span:text("미답변"))')
+                    if unanswered_tab:
+                        # 클릭 전 상태 확인
+                        tab_classes = await unanswered_tab.get_attribute('class')
+                        logger.info(f"클릭 전 미답변 탭 클래스: {tab_classes}")
+                        
+                        await unanswered_tab.click()
+                        await page.wait_for_timeout(3000)
+                        
+                        # 클릭 후 상태 확인
+                        tab_classes_after = await unanswered_tab.get_attribute('class')
+                        logger.info(f"클릭 후 미답변 탭 클래스: {tab_classes_after}")
+                        
+                        # 파란색 활성 상태인지 확인 (클래스 변화 확인)
+                        if tab_classes != tab_classes_after:
+                            logger.info("✅ 미답변 탭 클릭 성공 - 상태 변화 감지")
+                            tab_clicked = True
+                        else:
+                            logger.warning("⚠️ 미답변 탭 클릭했지만 상태 변화 없음")
+                except Exception as e:
+                    logger.debug(f"방법 1 실패: {str(e)}")
+                
+                # 방법 2: span을 직접 클릭
+                if not tab_clicked:
+                    try:
+                        span_element = await page.query_selector('span:text("미답변")')
+                        if span_element:
+                            await span_element.click()
+                            await page.wait_for_timeout(3000)
+                            logger.info("미답변 span 직접 클릭 시도")
+                            tab_clicked = True
+                    except Exception as e:
+                        logger.debug(f"방법 2 실패: {str(e)}")
+                
+                # 방법 3: JavaScript로 강제 클릭
+                if not tab_clicked:
+                    try:
+                        await page.evaluate("""
+                            const tabs = document.querySelectorAll('div.css-jzkpn6');
+                            for (let tab of tabs) {
+                                if (tab.textContent.includes('미답변')) {
+                                    tab.click();
+                                    console.log('JavaScript로 미답변 탭 클릭');
+                                    break;
+                                }
+                            }
+                        """)
+                        await page.wait_for_timeout(3000)
+                        logger.info("JavaScript로 미답변 탭 클릭 시도")
+                        tab_clicked = True
+                    except Exception as e:
+                        logger.debug(f"방법 3 실패: {str(e)}")
+                
+                if not tab_clicked:
+                    logger.warning("⚠️ 미답변 탭을 찾을 수 없음 - 전체 탭에서 검색")
+                
+                await page.wait_for_timeout(5000)  # 탭 전환 대기시간 증가
+                
+                # 현재 활성 탭 다시 확인 및 미답변 개수 확인
+                try:
+                    # 미답변 탭의 개수 확인
+                    unanswered_tab = await page.query_selector('div.css-jzkpn6:has(span:text("미답변"))')
+                    if unanswered_tab:
+                        count_element = await unanswered_tab.query_selector('b.css-1k8kvzj')
+                        if count_element:
+                            count_text = await count_element.text_content()
+                            logger.info(f"📊 미답변 리뷰 개수: {count_text}개")
+                            
+                            if count_text.strip() == "0":
+                                logger.warning("🚨 미답변 리뷰가 0개입니다!")
+                                logger.warning("   → 모든 리뷰에 이미 답글이 달려있거나, 다른 탭에 있을 수 있습니다.")
+                                
+                                # 전체 탭으로 전환해서 확인
+                                try:
+                                    all_tab = await page.query_selector('div.css-jzkpn6:has(span:text("전체"))')
+                                    if all_tab:
+                                        logger.info("전체 탭으로 전환하여 확인합니다...")
+                                        await all_tab.click()
+                                        await page.wait_for_timeout(3000)
+                                        
+                                        # 전체 리뷰 개수 확인
+                                        all_count_element = await all_tab.query_selector('b.css-1k8kvzj')
+                                        if all_count_element:
+                                            all_count = await all_count_element.text_content()
+                                            logger.info(f"📊 전체 리뷰 개수: {all_count}개")
+                                except Exception as e:
+                                    logger.warning(f"전체 탭 확인 실패: {str(e)}")
+                            else:
+                                logger.info(f"✅ 미답변 리뷰 {count_text}개 확인됨")
+                    
+                    # 활성 탭 확인
+                    active_tab = await page.query_selector('[aria-selected="true"]')
+                    if active_tab:
+                        tab_text = await active_tab.text_content()
+                        logger.info(f"✅ 탭 전환 후 현재 활성 탭: {tab_text}")
+                    else:
+                        # CSS 클래스로 활성 탭 찾기
+                        active_tabs = await page.query_selector_all('div.css-jzkpn6')
+                        for tab in active_tabs:
+                            try:
+                                tab_classes = await tab.get_attribute('class')
+                                tab_text = await tab.text_content()
+                                if 'active' in tab_classes or '활성' in tab_classes:
+                                    logger.info(f"✅ 활성 탭 발견: {tab_text}")
+                                    break
+                            except:
+                                continue
+                        else:
+                            logger.warning("활성 탭을 찾을 수 없음")
+                except Exception as e:
+                    logger.warning(f"탭 상태 확인 실패: {str(e)}")
+                
+                # 테이블 로딩 대기
+                try:
+                    await page.wait_for_selector('table', timeout=10000)
+                    logger.info("테이블 로딩 완료")
+                except Exception as e:
+                    logger.warning(f"테이블 로딩 실패: {str(e)} - 계속 진행합니다.")
+                
+            except Exception as tab_e:
+                logger.error(f"탭 전환 중 오류: {str(tab_e)}")
+            
             return True
             
         except Exception as e:
             logger.error(f"리뷰 페이지 이동 중 오류: {str(e)}")
             return False
+    
+    def _extract_order_number_from_review_id(self, review_id: str) -> str:
+        """review_id에서 주문번호 추출"""
+        try:
+            # review_id 형식: "coupang_708561_2LJMLY_20250709"
+            if not review_id:
+                return ""
+            
+            parts = review_id.split('_')
+            if len(parts) >= 3:
+                return parts[2]  # 주문번호 부분
+            return ""
+        except Exception as e:
+            logger.error(f"주문번호 추출 실패: {e}")
+            return ""
             
     async def find_and_reply_to_review(self, page: Page, review_data: Dict) -> bool:
         """특정 리뷰를 찾아서 답글 등록 (페이지네이션 포함)"""
         try:
             review_content = review_data.get('review_content', '')
             reply_content = review_data.get('reply_content', '')
-            order_menu = review_data.get('ordered_menu', '')
+            review_id = review_data.get('review_id', '')
+            # 필드명 표준화: ordered_menu가 올바른 필드명
+            order_menu = review_data.get('ordered_menu', '') or review_data.get('order_menu', '')
+            # 추가 필드들도 미리 추출
+            review_name = review_data.get('review_name', '')
+            rating = review_data.get('rating')
+            
+            logger.info(f"🔍 주문메뉴 필드 확인: ordered_menu='{review_data.get('ordered_menu')}', order_menu='{review_data.get('order_menu')}'")
+            logger.info(f"최종 사용할 메뉴: '{order_menu}'")
+            logger.info(f"리뷰 ID: '{review_id}'")
+            
+            # review_id에서 주문번호 추출
+            target_order_number = self._extract_order_number_from_review_id(review_id)
+            logger.info(f"추출된 주문번호: '{target_order_number}'")
             
             logger.info(f"리뷰 찾기 시작: {review_content[:30]}...")
             
@@ -199,9 +380,9 @@ class CoupangReplyManager:
             while current_page <= max_pages:
                 logger.info(f"페이지 {current_page} 검색 중...")
                 
-                # 현재 페이지에서 리뷰 검색
+                # 현재 페이지에서 리뷰 검색 (review_id 전달)
                 review_found = await self._search_review_in_current_page(
-                    page, review_content, order_menu, reply_content
+                    page, review_id, order_menu, reply_content, review_name, rating
                 )
                 
                 if review_found:
@@ -225,78 +406,136 @@ class CoupangReplyManager:
             await page.screenshot(path=f"{self.screenshots_dir}/reply_error_{timestamp}.png")
             return False
 
-    async def _search_review_in_current_page(self, page: Page, review_content: str, 
-                                            order_menu: str, reply_content: str) -> bool:
-        """현재 페이지에서 리뷰 검색"""
+    async def _search_review_in_current_page(self, page: Page, review_id: str, 
+                                            order_menu: str, reply_content: str, 
+                                            review_name: str = '', rating: int = None) -> bool:
+        """현재 페이지에서 리뷰 검색 - review_name + review_id(주문번호) 매칭"""
         try:
+            logger.info(f"📊 찾고자 하는 리뷰 정보:")
+            logger.info(f"   - 리뷰어: '{review_name}'")
+            logger.info(f"   - 별점: {rating}")
+            logger.info(f"   - 리뷰 ID: '{review_id}'")
+            logger.info(f"   - 메뉴: '{order_menu}'")
+            
             # 모든 리뷰 행 가져오기
             review_rows = await page.query_selector_all('tr')
             
+            # 헤더 행 제외
+            actual_review_rows = []
             for row in review_rows:
+                th_elements = await row.query_selector_all('th')
+                if len(th_elements) == 0:
+                    actual_review_rows.append(row)
+            
+            logger.info(f"🔍 총 {len(actual_review_rows)}개 리뷰 행 검색")
+            
+            # 각 리뷰 행에서 review_name + 주문번호 매칭
+            for i, row in enumerate(actual_review_rows):
                 try:
-                    # 리뷰 텍스트 요소 찾기
-                    review_text_element = await row.query_selector('p.css-16m6tj.eqn7l9b5')
-                    if not review_text_element:
-                        continue
-                        
-                    found_review_text = await review_text_element.text_content()
+                    # 1. 리뷰어 이름 추출
+                    page_reviewer = ""
+                    try:
+                        reviewer_div = await row.query_selector('div.css-hdvjju.eqn7l9b7')
+                        if reviewer_div:
+                            b_elements = await reviewer_div.query_selector_all('b')
+                            if b_elements and len(b_elements) > 0:
+                                page_reviewer = await b_elements[0].text_content()
+                                page_reviewer = page_reviewer.strip() if page_reviewer else ""
+                    except:
+                        pass
                     
-                    # 리뷰 내용 매칭 (공백 제거하여 비교)
-                    if self._normalize_text(review_content) in self._normalize_text(found_review_text):
-                        logger.info(f"매칭되는 리뷰 발견: {found_review_text[:50]}...")
+                    # 2. 주문번호 추출
+                    page_order_number = ""
+                    try:
+                        li_elements = await row.query_selector_all('li')
+                        for li in li_elements:
+                            strong = await li.query_selector('strong')
+                            if strong:
+                                strong_text = await strong.text_content()
+                                if strong_text and '주문번호' in strong_text:
+                                    p_element = await li.query_selector('p')
+                                    if p_element:
+                                        order_info = await p_element.text_content()
+                                        order_info = order_info.strip() if order_info else ""
+                                        # "2LJMLYㆍ2025-07-09(주문일)" 형태에서 주문번호 추출
+                                        if 'ㆍ' in order_info:
+                                            page_order_number = order_info.split('ㆍ')[0].strip()
+                                        break
+                    except:
+                        pass
+                    
+                    logger.debug(f"리뷰 {i+1}: 이름='{page_reviewer}', 주문번호='{page_order_number}'")
+                    
+                    # 매칭 확인: review_name + 주문번호
+                    if review_name and page_reviewer and review_name == page_reviewer:
+                        # 주문번호 매칭 확인
+                        target_order_number = self._extract_order_number_from_review_id(review_id)
                         
-                        # 주문 메뉴도 확인 (선택적)
-                        if order_menu:
-                            menu_element = await row.query_selector('li:has-text("주문메뉴") p')
-                            if menu_element:
-                                menu_text = await menu_element.text_content()
-                                if order_menu not in menu_text:
-                                    logger.info("주문 메뉴가 일치하지 않음, 다음 리뷰 확인")
-                                    continue
-                        
-                        # 사장님 댓글 등록하기 버튼 찾기
-                        reply_button = await row.query_selector('button.css-1ss7t0c.eqn7l9b2')
-                        if not reply_button:
-                            # 대체 셀렉터
-                            reply_button = await row.query_selector('button:has-text("사장님 댓글 등록하기")')
-                        
-                        if reply_button:
-                            await reply_button.click()
-                            await page.wait_for_timeout(2000)
+                        if target_order_number and page_order_number and target_order_number == page_order_number:
+                            logger.info(f"🎯 완벽한 매칭 발견! 리뷰어: '{review_name}', 주문번호: '{page_order_number}'")
                             
-                            # 텍스트박스에 답글 입력
-                            textarea = await page.wait_for_selector('textarea[name="review"]', state='visible', timeout=5000)
-                            await textarea.fill(reply_content)
-                            await page.wait_for_timeout(1000)
+                            # 답글 버튼 찾기
+                            reply_button = await row.query_selector('button.css-1ss7t0c.eqn7l9b2')
+                            if not reply_button:
+                                reply_button = await row.query_selector('button:has-text("사장님 댓글 등록하기")')
                             
-                            # 등록 버튼 클릭
-                            submit_button = await page.query_selector('button:has-text("등록").button--primaryContained')
-                            if not submit_button:
-                                # 대체 셀렉터
-                                submit_button = await page.query_selector('button.button--primaryContained:has-text("등록")')
-                            
-                            if submit_button:
+                            if reply_button:
+                                logger.info("✅ 답글 버튼 발견 - 답글 등록 시작")
                                 
-                                await submit_button.click()
-                                await page.wait_for_timeout(3000)
+                                # 답글 등록 프로세스
+                                await reply_button.click()
+                                await page.wait_for_timeout(2000)
                                 
-                                logger.info("답글 등록 완료")
-                                return True
+                                # 답글 입력
+                                reply_textarea = await page.query_selector('textarea')
+                                if reply_textarea:
+                                    await reply_textarea.fill(reply_content)
+                                    await page.wait_for_timeout(1000)
+                                    
+                                    # 등록 버튼 클릭 - 실제 HTML 구조에 맞게 수정
+                                    submit_button = await page.query_selector('button.button.button-size--small.button--primaryContained:has(span.button__inner:text("등록"))')
+                                    if not submit_button:
+                                        # 대체 셀렉터들 시도
+                                        submit_selectors = [
+                                            'button.button--primaryContained:has(span:text("등록"))',
+                                            'button[class*="button--primaryContained"]:has(span:text("등록"))',
+                                            'button:has(span.button__inner:text("등록"))',
+                                            'button.button:has(span:text("등록"))'
+                                        ]
+                                        for selector in submit_selectors:
+                                            submit_button = await page.query_selector(selector)
+                                            if submit_button:
+                                                logger.info(f"등록 버튼 발견 (셀렉터: {selector})")
+                                                break
+                                    
+                                    if submit_button:
+                                        await submit_button.click()
+                                        await page.wait_for_timeout(3000)
+                                        logger.info("✅ 답글 등록 완료!")
+                                        return True
+                                    else:
+                                        logger.error("등록 버튼을 찾을 수 없음")
+                                        # 스크린샷 저장하여 디버깅
+                                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                        await page.screenshot(path=f"{self.screenshots_dir}/submit_button_missing_{timestamp}.png")
+                                        return False
+                                else:
+                                    logger.error("답글 입력창을 찾을 수 없음")
+                                    return False
                             else:
-                                logger.error("등록 버튼을 찾을 수 없음")
-                        else:
-                            logger.warning("답글 버튼을 찾을 수 없음 - 이미 답글이 있을 수 있음")
-                            
+                                logger.warning("📝 답글 버튼이 없음 - 이미 답글이 있는 리뷰")
+                                return "ALREADY_REPLIED"
+                    
                 except Exception as e:
-                    logger.error(f"리뷰 행 처리 중 오류: {str(e)}")
+                    logger.error(f"리뷰 {i+1} 처리 중 오류: {str(e)}")
                     continue
             
+            logger.warning("매칭되는 리뷰를 찾을 수 없음")
             return False
             
         except Exception as e:
-            logger.error(f"페이지 내 리뷰 검색 중 오류: {str(e)}")
+            logger.error(f"리뷰 검색 중 오류: {str(e)}")
             return False
-
     def _normalize_text(self, text: str) -> str:
         """텍스트 정규화 (공백, 특수문자 제거)"""
         if not text:

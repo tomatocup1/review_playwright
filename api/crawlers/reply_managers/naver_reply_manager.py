@@ -8,6 +8,7 @@ import json
 import re
 import logging
 import os
+import hashlib
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 class NaverReplyManager:
@@ -20,10 +21,78 @@ class NaverReplyManager:
         self.login_url = "https://nid.naver.com/nidlogin.login"
         self.review_url_template = "https://new.smartplace.naver.com/bizes/place/{platform_code}"
         
+        # 브라우저 프로필 저장 경로 (크롤러와 동일)
+        self.browser_data_dir = os.path.join("logs", "browser_profiles", "naver")
+        os.makedirs(self.browser_data_dir, exist_ok=True)
+        
+        # 계정별 브라우저 프로필 경로
+        platform_id = self.store_info.get('platform_id', 'default')
+        account_hash = hashlib.md5(platform_id.encode()).hexdigest()[:10]
+        self.profile_path = os.path.join(self.browser_data_dir, f"profile_{account_hash}")
+        os.makedirs(self.profile_path, exist_ok=True)
+        
+        # 기기 등록 정보 파일 경로
+        self.device_info_file = os.path.join(self.profile_path, "device_registered.json")
+        
+    def check_device_registration(self) -> bool:
+        """기기 등록 정보 확인"""
+        try:
+            if os.path.exists(self.device_info_file):
+                with open(self.device_info_file, 'r') as f:
+                    device_info = json.load(f)
+                    if device_info.get('registered'):
+                        self.logger.info("기기 등록 정보 확인됨 - 기존 등록된 기기")
+                        return True
+            return False
+        except Exception as e:
+            self.logger.error(f"기기 등록 정보 확인 실패: {str(e)}")
+            return False
+    
+    async def check_login_status(self, page: Page) -> bool:
+        """로그인 상태 확인"""
+        try:
+            # 네이버 메인 페이지로 이동하여 로그인 상태 확인
+            await page.goto("https://www.naver.com", wait_until="domcontentloaded")
+            await asyncio.sleep(2)
+            
+            # 로그인 상태 확인 (프로필 이미지나 로그인 버튼 확인)
+            login_button = await page.query_selector('a[href*="nid.naver.com/nidlogin.login"]')
+            if login_button:
+                self.logger.info("로그인되지 않은 상태")
+                return False
+            
+            # 프로필 영역 확인
+            profile_area = await page.query_selector('.MyView-module__my_view___HhQoA')
+            if profile_area:
+                self.logger.info("이미 로그인된 상태 확인")
+                return True
+            
+            # 대체 방법: 네이버 스마트플레이스 페이지로 직접 이동해서 확인
+            test_url = f"https://new.smartplace.naver.com/bizes/place/{self.store_info['platform_code']}"
+            await page.goto(test_url, wait_until="domcontentloaded")
+            await asyncio.sleep(3)
+            
+            # 로그인 페이지로 리다이렉트되었는지 확인
+            current_url = page.url
+            if "nid.naver.com" in current_url:
+                self.logger.info("로그인 필요한 상태")
+                return False
+            
+            self.logger.info("로그인된 상태로 확인")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"로그인 상태 확인 실패: {str(e)}")
+            return False
+        
     async def login(self, page: Page) -> bool:
-        """네이버 로그인"""
+        """네이버 로그인 (브라우저 프로필 기반)"""
         try:
             self.logger.info(f"네이버 로그인 시작: {self.store_info.get('platform_id')}")
+            
+            # 기기 등록 정보 확인
+            if self.check_device_registration():
+                self.logger.info("✅ 기존 등록된 기기 - 새로운 기기 알림 없음")
             
             # 로그인 페이지로 이동
             await page.goto(self.login_url, wait_until="domcontentloaded")
@@ -75,6 +144,15 @@ class NaverReplyManager:
                     self.logger.info("기기 등록 버튼 클릭 완료")
                     
                     await page.wait_for_navigation(timeout=5000)
+                    
+                    # 기기 등록 정보 저장 (크롤러와 동일)
+                    with open(self.device_info_file, 'w') as f:
+                        json.dump({
+                            "registered": True,
+                            "date": datetime.now().isoformat(),
+                            "platform_id": self.store_info.get('platform_id')
+                        }, f)
+                    self.logger.info("기기 등록 정보 저장 완료")
                     
                 except Exception as e:
                     self.logger.error(f"기기 등록 버튼 클릭 실패: {str(e)}")
@@ -454,6 +532,7 @@ class NaverReplyManager:
             
             if success:
                 self.logger.info(f"=== 답글 등록 성공: {review_info.get('review_name')} ===")
+                return True
             
             else:
                 self.logger.error(f"=== 답글 등록 확인 실패: {review_info.get('review_name')} ===")
